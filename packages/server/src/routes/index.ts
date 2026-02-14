@@ -1,0 +1,438 @@
+/**
+ * API Routes
+ */
+
+import { Router, Request, Response } from 'express';
+import { ServerContext } from '../server.js';
+import { AuthenticatedRequest } from '../middleware/auth.js';
+
+export function setupRoutes(app: Router, context: ServerContext): void {
+  // Health
+  app.get('/health', (_req: Request, res: Response) => {
+    res.json({
+      ok: true,
+      version: '0.1.0',
+      uptimeMs: Date.now() - context.config.startedAt,
+    });
+  });
+
+  // Status
+  app.get('/status', (req: AuthenticatedRequest, res: Response) => {
+    res.json({
+      ok: true,
+      version: '0.1.0',
+      uptimeMs: Date.now() - context.config.startedAt,
+      readOnly: context.config.readOnly,
+      approval: context.config.approval,
+      corsOrigins: context.config.corsOrigins,
+      workspaceCount: context.config.workspaces.length,
+      activeWorkspaceId: context.config.activeWorkspaceId,
+      authorizedRoots: context.config.authorizedRoots,
+      server: {
+        host: context.config.host,
+        port: context.config.port,
+        configPath: context.config.configPath ?? null,
+      },
+    });
+  });
+
+  // Capabilities
+  app.get('/capabilities', (_req: Request, res: Response) => {
+    res.json({
+      schemaVersion: 1,
+      serverVersion: '0.1.0',
+      skills: { read: true, write: !context.config.readOnly },
+      plugins: { read: true, write: !context.config.readOnly },
+      mcp: { read: true, write: !context.config.readOnly },
+      commands: { read: true, write: !context.config.readOnly },
+      config: { read: true, write: !context.config.readOnly },
+      approvals: context.config.approval,
+      tokens: {
+        scoped: true,
+        scopes: ['owner', 'collaborator', 'viewer'],
+      },
+      proxy: {
+        opencode: false,
+        comrade: true,
+      },
+    });
+  });
+
+  // Workspaces
+  app.get('/workspaces', (req: AuthenticatedRequest, res: Response) => {
+    const workspaces = context.workspaceService.getAll().map(w => ({
+      id: w.id,
+      name: w.name,
+      path: w.path,
+      createdAt: w.createdAt,
+      updatedAt: w.updatedAt,
+    }));
+    
+    res.json({
+      items: workspaces,
+      activeId: context.config.activeWorkspaceId,
+    });
+  });
+
+  app.post('/workspaces', async (req: AuthenticatedRequest, res: Response) => {
+    if (context.config.readOnly) {
+      return res.status(403).json({ code: 'read_only', message: 'Server is in read-only mode' });
+    }
+
+    const { name, path } = req.body;
+    if (!name || !path) {
+      return res.status(400).json({ code: 'invalid_payload', message: 'Name and path are required' });
+    }
+
+    const workspace = await context.workspaceService.create(name, path);
+    res.status(201).json(workspace);
+  });
+
+  app.get('/workspaces/:id', (req: AuthenticatedRequest, res: Response) => {
+    const workspace = context.workspaceService.getById(req.params.id);
+    if (!workspace) {
+      return res.status(404).json({ code: 'not_found', message: 'Workspace not found' });
+    }
+    res.json(workspace);
+  });
+
+  app.post('/workspaces/:id/activate', (req: AuthenticatedRequest, res: Response) => {
+    const success = context.workspaceService.setActive(req.params.id);
+    if (!success) {
+      return res.status(404).json({ code: 'not_found', message: 'Workspace not found' });
+    }
+    res.json({ activeId: req.params.id });
+  });
+
+  app.delete('/workspaces/:id', (req: AuthenticatedRequest, res: Response) => {
+    if (context.config.readOnly) {
+      return res.status(403).json({ code: 'read_only', message: 'Server is in read-only mode' });
+    }
+
+    const success = context.workspaceService.delete(req.params.id);
+    if (!success) {
+      return res.status(404).json({ code: 'not_found', message: 'Workspace not found' });
+    }
+    res.json({ ok: true });
+  });
+
+  // Skills
+  app.get('/workspaces/:id/skills', async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const skills = await context.skillService.list(req.params.id);
+      res.json({ items: skills });
+    } catch (error: any) {
+      res.status(400).json({ code: 'error', message: error.message });
+    }
+  });
+
+  app.post('/workspaces/:id/skills', async (req: AuthenticatedRequest, res: Response) => {
+    if (context.config.readOnly) {
+      return res.status(403).json({ code: 'read_only', message: 'Server is in read-only mode' });
+    }
+
+    const { name, content } = req.body;
+    if (!name || !content) {
+      return res.status(400).json({ code: 'invalid_payload', message: 'Name and content are required' });
+    }
+
+    try {
+      const skill = await context.skillService.create(req.params.id, name, content);
+      res.status(201).json(skill);
+    } catch (error: any) {
+      res.status(400).json({ code: 'error', message: error.message });
+    }
+  });
+
+  app.get('/workspaces/:id/skills/:name', async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const skill = await context.skillService.get(req.params.id, req.params.name);
+      if (!skill) {
+        return res.status(404).json({ code: 'not_found', message: 'Skill not found' });
+      }
+      res.json(skill);
+    } catch (error: any) {
+      res.status(400).json({ code: 'error', message: error.message });
+    }
+  });
+
+  app.patch('/workspaces/:id/skills/:name', async (req: AuthenticatedRequest, res: Response) => {
+    if (context.config.readOnly) {
+      return res.status(403).json({ code: 'read_only', message: 'Server is in read-only mode' });
+    }
+
+    const { content } = req.body;
+    if (!content) {
+      return res.status(400).json({ code: 'invalid_payload', message: 'Content is required' });
+    }
+
+    try {
+      const skill = await context.skillService.update(req.params.id, req.params.name, content);
+      res.json(skill);
+    } catch (error: any) {
+      res.status(400).json({ code: 'error', message: error.message });
+    }
+  });
+
+  app.delete('/workspaces/:id/skills/:name', async (req: AuthenticatedRequest, res: Response) => {
+    if (context.config.readOnly) {
+      return res.status(403).json({ code: 'read_only', message: 'Server is in read-only mode' });
+    }
+
+    try {
+      const success = await context.skillService.delete(req.params.id, req.params.name);
+      if (!success) {
+        return res.status(404).json({ code: 'not_found', message: 'Skill not found' });
+      }
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(400).json({ code: 'error', message: error.message });
+    }
+  });
+
+  // Sessions
+  app.get('/workspaces/:id/sessions', async (req: AuthenticatedRequest, res: Response) => {
+    const sessions = await context.sessionService.list(req.params.id);
+    res.json({ items: sessions });
+  });
+
+  app.post('/workspaces/:id/sessions', async (req: AuthenticatedRequest, res: Response) => {
+    const { title } = req.body;
+    const session = await context.sessionService.create(req.params.id, title || 'New Session');
+    res.status(201).json(session);
+  });
+
+  app.get('/sessions/:sessionId', async (req: AuthenticatedRequest, res: Response) => {
+    const session = await context.sessionService.get(req.params.sessionId);
+    if (!session) {
+      return res.status(404).json({ code: 'not_found', message: 'Session not found' });
+    }
+    res.json(session);
+  });
+
+  app.post('/sessions/:sessionId/messages', async (req: AuthenticatedRequest, res: Response) => {
+    const { role, content } = req.body;
+    if (!role || !content) {
+      return res.status(400).json({ code: 'invalid_payload', message: 'Role and content are required' });
+    }
+
+    try {
+      const message = await context.sessionService.addMessage(req.params.sessionId, role, content);
+      res.status(201).json(message);
+    } catch (error: any) {
+      res.status(400).json({ code: 'error', message: error.message });
+    }
+  });
+
+  app.delete('/sessions/:sessionId', async (req: AuthenticatedRequest, res: Response) => {
+    const success = await context.sessionService.delete(req.params.sessionId);
+    if (!success) {
+      return res.status(404).json({ code: 'not_found', message: 'Session not found' });
+    }
+    res.json({ ok: true });
+  });
+
+  // Tokens (host only)
+  app.get('/tokens', async (req: AuthenticatedRequest, res: Response) => {
+    if (req.actor?.scope !== 'owner') {
+      return res.status(403).json({ code: 'forbidden', message: 'Owner access required' });
+    }
+
+    const tokens = await context.tokenService.list();
+    res.json({ items: tokens });
+  });
+
+  app.post('/tokens', async (req: AuthenticatedRequest, res: Response) => {
+    if (req.actor?.scope !== 'owner') {
+      return res.status(403).json({ code: 'forbidden', message: 'Owner access required' });
+    }
+
+    const { scope, label, expiresInHours } = req.body;
+    if (!scope) {
+      return res.status(400).json({ code: 'invalid_payload', message: 'Scope is required' });
+    }
+
+    const token = await context.tokenService.create(scope, { label, expiresInHours });
+    res.status(201).json(token);
+  });
+
+  app.delete('/tokens/:id', async (req: AuthenticatedRequest, res: Response) => {
+    if (req.actor?.scope !== 'owner') {
+      return res.status(403).json({ code: 'forbidden', message: 'Owner access required' });
+    }
+
+    const success = await context.tokenService.revoke(req.params.id);
+    if (!success) {
+      return res.status(404).json({ code: 'not_found', message: 'Token not found' });
+    }
+    res.json({ ok: true });
+  });
+
+  // Audit
+  app.get('/audit', async (req: AuthenticatedRequest, res: Response) => {
+    const limit = parseInt(req.query.limit as string) || 100;
+    const entries = await context.auditService.list(undefined, limit);
+    res.json({ items: entries });
+  });
+
+  app.get('/workspaces/:id/audit', async (req: AuthenticatedRequest, res: Response) => {
+    const limit = parseInt(req.query.limit as string) || 100;
+    const entries = await context.auditService.list(req.params.id, limit);
+    res.json({ items: entries });
+  });
+
+  // LLM Configuration
+  app.get('/llm/providers', (_req: Request, res: Response) => {
+    const providers = context.llmService.getProviders();
+    res.json({ items: providers });
+  });
+
+  app.get('/llm/config', (_req: Request, res: Response) => {
+    const config = context.llmService.getConfig();
+    res.json({ config });
+  });
+
+  app.post('/llm/config', (req: Request, res: Response) => {
+    if (context.config.readOnly) {
+      return res.status(403).json({ code: 'read_only', message: 'Server is in read-only mode' });
+    }
+
+    const config = req.body;
+    context.llmService.updateConfig(config);
+    res.json({ success: true });
+  });
+
+  app.get('/llm/status', (_req: Request, res: Response) => {
+    const validation = context.llmService.validateConfig();
+    res.json({
+      enabled: context.llmService.isEnabled(),
+      valid: validation.valid,
+      error: validation.error,
+    });
+  });
+
+  // Ollama Models - fetch available models from local Ollama instance
+  app.get('/llm/ollama/models', async (req: Request, res: Response) => {
+    const { baseUrl } = req.query;
+    try {
+      const models = await context.llmService.getOllamaModels(baseUrl as string | undefined);
+      res.json({ items: models });
+    } catch (error) {
+      res.status(500).json({ 
+        code: 'ollama_error', 
+        message: error instanceof Error ? error.message : 'Failed to fetch Ollama models' 
+      });
+    }
+  });
+
+  // LLM Chat Stream
+  app.post('/llm/chat', async (req: AuthenticatedRequest, res: Response) => {
+    const { messages, workspaceId } = req.body;
+
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ code: 'invalid_payload', message: 'Messages array is required' });
+    }
+
+    const validation = context.llmService.validateConfig();
+    if (!validation.valid) {
+      return res.status(400).json({ code: 'llm_not_configured', message: validation.error });
+    }
+
+    // Set workspace for tool execution
+    if (workspaceId) {
+      const workspace = context.workspaceService.getById(workspaceId);
+      if (workspace) {
+        context.llmService.setWorkspace(workspace.path);
+      }
+    }
+
+    // Set headers for SSE
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    try {
+      const stream = context.llmService.streamChat(messages);
+      let fullContent = '';
+      
+      for await (const chunk of stream) {
+        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        
+        if (chunk.content) {
+          fullContent += chunk.content;
+        }
+        
+        if (chunk.done) {
+          break;
+        }
+      }
+      
+      // Check for and execute tool calls
+      const { text, executed } = await context.llmService.executeToolCalls(fullContent);
+      
+      if (executed) {
+        // Send tool execution results
+        res.write(`data: ${JSON.stringify({ 
+          toolResults: true, 
+          updatedContent: text,
+          done: false 
+        })}\n\n`);
+      }
+      
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      res.end();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Streaming error';
+      res.write(`data: ${JSON.stringify({ error: errorMessage, done: true })}\n\n`);
+      res.end();
+    }
+  });
+
+  // Telegram Bot Configuration
+  app.get('/telegram/config', (req: AuthenticatedRequest, res: Response) => {
+    const config = context.telegramBotService.getConfig();
+    res.json({ config });
+  });
+
+  app.post('/telegram/config', (req: AuthenticatedRequest, res: Response) => {
+    if (context.config.readOnly) {
+      return res.status(403).json({ code: 'read_only', message: 'Server is in read-only mode' });
+    }
+
+    const config = req.body;
+    context.telegramBotService.updateConfig(config);
+    res.json({ success: true });
+  });
+
+  app.get('/telegram/status', (req: AuthenticatedRequest, res: Response) => {
+    const status = context.telegramBotService.getStatus();
+    res.json(status);
+  });
+
+  app.post('/telegram/start', async (req: AuthenticatedRequest, res: Response) => {
+    if (context.config.readOnly) {
+      return res.status(403).json({ code: 'read_only', message: 'Server is in read-only mode' });
+    }
+
+    const result = await context.telegramBotService.start();
+    if (result.success) {
+      res.json({ success: true, botInfo: result.botInfo });
+    } else {
+      res.status(400).json({ code: 'telegram_error', message: result.error });
+    }
+  });
+
+  app.post('/telegram/stop', async (req: AuthenticatedRequest, res: Response) => {
+    if (context.config.readOnly) {
+      return res.status(403).json({ code: 'read_only', message: 'Server is in read-only mode' });
+    }
+
+    await context.telegramBotService.stop();
+    res.json({ success: true });
+  });
+
+  app.post('/telegram/validate', (req: AuthenticatedRequest, res: Response) => {
+    const validation = context.telegramBotService.validateConfig();
+    res.json(validation);
+  });
+}

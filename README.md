@@ -4,6 +4,8 @@
 
 **Comrade** is an open-source AI workspace for teams. It provides a premium interface for AI-powered workflows, built with transparency, extensibility, and local-first principles.
 
+![Telegram Screenshot](screenshot.png)
+
 ## Features
 
 - **Zero-friction Setup**: Works with your existing configuration

@@ -1,0 +1,36 @@
+[workspaceSlice] Got host token: TdEI8JYU...
+workspaceSlice.ts:32 [workspaceSlice] Adding X-Comrade-Host-Token header
+workspaceSlice.ts:25 [workspaceSlice] Got host token: TdEI8JYU...
+workspaceSlice.ts:32 [workspaceSlice] Adding X-Comrade-Host-Token header
+workspaceSlice.ts:25 [workspaceSlice] Got host token: TdEI8JYU...
+workspaceSlice.ts:32 [workspaceSlice] Adding X-Comrade-Host-Token header
+sessionSlice.ts:30 
+        
+        
+       GET http://127.0.0.1:8080/workspaces/LVSzRHpkD6R3/sessions 401 (Unauthorized)
+(anonymous) @ sessionSlice.ts:30
+await in (anonymous) (async)
+(anonymous) @ @reduxjs_toolkit.js?v=be2b58f3:2539
+(anonymous) @ @reduxjs_toolkit.js?v=be2b58f3:2573
+(anonymous) @ @reduxjs_toolkit.js?v=be2b58f3:1634
+(anonymous) @ @reduxjs_toolkit.js?v=be2b58f3:1901
+(anonymous) @ @reduxjs_toolkit.js?v=be2b58f3:1725
+(anonymous) @ ChatPage.tsx:27
+commitHookEffectListMount @ chunk-FDCL5M4P.js?v=be2b58f3:16915
+commitPassiveMountOnFiber @ chunk-FDCL5M4P.js?v=be2b58f3:18156
+commitPassiveMountEffects_complete @ chunk-FDCL5M4P.js?v=be2b58f3:18129
+commitPassiveMountEffects_begin @ chunk-FDCL5M4P.js?v=be2b58f3:18119
+commitPassiveMountEffects @ chunk-FDCL5M4P.js?v=be2b58f3:18109
+flushPassiveEffectsImpl @ chunk-FDCL5M4P.js?v=be2b58f3:19490
+flushPassiveEffects @ chunk-FDCL5M4P.js?v=be2b58f3:19447
+commitRootImpl @ chunk-FDCL5M4P.js?v=be2b58f3:19416
+commitRoot @ chunk-FDCL5M4P.js?v=be2b58f3:19277
+performSyncWorkOnRoot @ chunk-FDCL5M4P.js?v=be2b58f3:18895
+flushSyncCallbacks @ chunk-FDCL5M4P.js?v=be2b58f3:9119
+(anonymous) @ chunk-FDCL5M4P.js?v=be2b58f3:18627
+Show 17 more frames
+Show less
+sessionSlice.ts:30 
+        
+        
+       GET http://127.0.0.1:8080/workspaces/LVSzRHpkD6R3/sessions 401 (Unauthorized)

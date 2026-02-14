@@ -1,0 +1,14 @@
+/* Comrade UI Styles */
+
+@import './variables.css';
+
+/* Base styles */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-family);
+  color: var(--text-primary);
+  background: var(--bg-primary);
+}
