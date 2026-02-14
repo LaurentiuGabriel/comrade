@@ -2,7 +2,7 @@
 
 ![Comrade](logo.png)
 
-**Comrade** is an open-source AI workspace for teams. It provides a premium interface for AI-powered workflows, built with transparency, extensibility, and local-first principles.
+**Comrade** is an open-source AI workspace for teams focused on security. It provides a premium interface for AI-powered workflows, built with transparency, extensibility, and local-first principles.
 
 ![Telegram Screenshot](screenshot.png)
 
