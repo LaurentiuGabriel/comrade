@@ -3,17 +3,50 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { HealthStatus } from '@comrade/core';
 import { ServerContext } from '../server.js';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 
 export function setupRoutes(app: Router, context: ServerContext): void {
   // Health
   app.get('/health', (_req: Request, res: Response) => {
-    res.json({
+    const health: HealthStatus = {
       ok: true,
       version: '0.1.0',
       uptimeMs: Date.now() - context.config.startedAt,
-    });
+    };
+    res.json(health);
+  });
+
+  // Config
+  app.get('/config', async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const configPath = context.configService.getConfigPath();
+      const exists = await context.configService.exists();
+      
+      res.json({
+        configPath,
+        exists,
+        config: context.configService.getSanitizedConfig(),
+      });
+    } catch (error) {
+      res.status(500).json({ 
+        code: 'config_error', 
+        message: error instanceof Error ? error.message : 'Failed to get config' 
+      });
+    }
+  });
+
+  app.post('/config/save', async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      await context.configService.save();
+      res.json({ success: true, message: 'Configuration saved' });
+    } catch (error) {
+      res.status(500).json({ 
+        code: 'save_error', 
+        message: error instanceof Error ? error.message : 'Failed to save config' 
+      });
+    }
   });
 
   // Status
@@ -85,6 +118,15 @@ export function setupRoutes(app: Router, context: ServerContext): void {
     }
 
     const workspace = await context.workspaceService.create(name, path);
+    
+    // Save configuration to file
+    try {
+      await context.configService.save();
+      console.log('[routes] Workspace configuration saved');
+    } catch (error) {
+      console.error('[routes] Failed to save workspace configuration:', error);
+    }
+    
     res.status(201).json(workspace);
   });
 
@@ -96,15 +138,24 @@ export function setupRoutes(app: Router, context: ServerContext): void {
     res.json(workspace);
   });
 
-  app.post('/workspaces/:id/activate', (req: AuthenticatedRequest, res: Response) => {
+  app.post('/workspaces/:id/activate', async (req: AuthenticatedRequest, res: Response) => {
     const success = context.workspaceService.setActive(req.params.id);
     if (!success) {
       return res.status(404).json({ code: 'not_found', message: 'Workspace not found' });
     }
+    
+    // Save configuration to file
+    try {
+      await context.configService.save();
+      console.log('[routes] Active workspace saved');
+    } catch (error) {
+      console.error('[routes] Failed to save active workspace:', error);
+    }
+    
     res.json({ activeId: req.params.id });
   });
 
-  app.delete('/workspaces/:id', (req: AuthenticatedRequest, res: Response) => {
+  app.delete('/workspaces/:id', async (req: AuthenticatedRequest, res: Response) => {
     if (context.config.readOnly) {
       return res.status(403).json({ code: 'read_only', message: 'Server is in read-only mode' });
     }
@@ -113,6 +164,15 @@ export function setupRoutes(app: Router, context: ServerContext): void {
     if (!success) {
       return res.status(404).json({ code: 'not_found', message: 'Workspace not found' });
     }
+    
+    // Save configuration to file
+    try {
+      await context.configService.save();
+      console.log('[routes] Workspace deletion saved');
+    } catch (error) {
+      console.error('[routes] Failed to save workspace configuration after deletion:', error);
+    }
+    
     res.json({ ok: true });
   });
 
@@ -292,13 +352,22 @@ export function setupRoutes(app: Router, context: ServerContext): void {
     res.json({ config });
   });
 
-  app.post('/llm/config', (req: Request, res: Response) => {
+  app.post('/llm/config', async (req: Request, res: Response) => {
     if (context.config.readOnly) {
       return res.status(403).json({ code: 'read_only', message: 'Server is in read-only mode' });
     }
 
     const config = req.body;
     context.llmService.updateConfig(config);
+    
+    // Save configuration to file
+    try {
+      await context.configService.save();
+      console.log('[routes] LLM configuration saved');
+    } catch (error) {
+      console.error('[routes] Failed to save LLM configuration:', error);
+    }
+    
     res.json({ success: true });
   });
 
@@ -394,13 +463,22 @@ export function setupRoutes(app: Router, context: ServerContext): void {
     res.json({ config });
   });
 
-  app.post('/telegram/config', (req: AuthenticatedRequest, res: Response) => {
+  app.post('/telegram/config', async (req: AuthenticatedRequest, res: Response) => {
     if (context.config.readOnly) {
       return res.status(403).json({ code: 'read_only', message: 'Server is in read-only mode' });
     }
 
     const config = req.body;
     context.telegramBotService.updateConfig(config);
+    
+    // Save configuration to file
+    try {
+      await context.configService.save();
+      console.log('[routes] Telegram configuration saved');
+    } catch (error) {
+      console.error('[routes] Failed to save Telegram configuration:', error);
+    }
+    
     res.json({ success: true });
   });
 

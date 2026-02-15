@@ -5,12 +5,34 @@
 
 import { ServerConfig } from '@comrade/core';
 import { writeFile, readFile, mkdir, access, constants, readdir, stat } from 'fs/promises';
-import { dirname, join, resolve, relative } from 'path';
+import { createReadStream, existsSync } from 'fs';
+import { dirname, join, resolve, relative, extname } from 'path';
 import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
 import { createHash } from 'crypto';
+import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
 
 const execAsync = promisify(exec);
+
+// MIME types for static file serving
+const MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html',
+  '.css': 'text/css',
+  '.js': 'application/javascript',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.txt': 'text/plain',
+  '.md': 'text/markdown',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.eot': 'application/vnd.ms-fontobject',
+};
 
 export interface Tool {
   name: string;
@@ -44,12 +66,30 @@ export const AVAILABLE_TOOLS: Tool[] = [
   // File System Tools
   {
     name: 'write_file',
-    description: 'Create or overwrite a file with the specified content. The path must be within the current workspace.',
+    description: `Create or overwrite a file with the specified content. The path must be within the current workspace.
+
+REQUIRED PARAMETERS:
+- path: The file path (e.g., "src/main.js")
+- content: The COMPLETE file content as a string (e.g., "console.log('hello');\\nfunction test() {}")
+
+EXAMPLE - Creating a file:
+{
+  "path": "src/app.js",
+  "content": "function hello() {\\n  console.log('Hello World');\\n}\\n\\nhello();"
+}
+
+IMPORTANT: Both path AND content are REQUIRED. The content field must contain all the code/text for the file.`,
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'The file path relative to the workspace root' },
-        content: { type: 'string', description: 'The content to write to the file' }
+        path: { 
+          type: 'string', 
+          description: 'The file path relative to the workspace root' 
+        },
+        content: { 
+          type: 'string', 
+          description: 'The complete file content to write as a string. This is REQUIRED.' 
+        }
       },
       required: ['path', 'content']
     }
@@ -235,6 +275,20 @@ export const AVAILABLE_TOOLS: Tool[] = [
     }
   },
   
+  // Local Server
+  {
+    name: 'start_server',
+    description: 'Start a local HTTP server to serve static files. Works cross-platform (Windows/Linux/Mac). Returns the URL where files are being served.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Directory to serve (relative to workspace, defaults to current directory)' },
+        port: { type: 'number', description: 'Port number (default: 8080)' }
+      },
+      required: []
+    }
+  },
+  
   // API Testing
   {
     name: 'http_request',
@@ -410,6 +464,10 @@ export class ToolsService {
         case 'package_install':
           return await this.packageInstall(call.arguments);
         
+        // Local Server
+        case 'start_server':
+          return await this.startServer(call.arguments);
+        
         // API Testing
         case 'http_request':
           return await this.httpRequest(call.arguments);
@@ -438,17 +496,29 @@ export class ToolsService {
   // ============================================
 
   private async writeFile(args: Record<string, unknown>): Promise<ToolResult> {
+    console.log('[tools] writeFile called with args:', JSON.stringify(args, null, 2));
+    
     const { path: relativePath, content } = args;
     
-    if (typeof relativePath !== 'string' || typeof content !== 'string') {
-      return { success: false, error: 'Invalid arguments: path and content must be strings' };
+    if (typeof relativePath !== 'string') {
+      console.error('[tools] writeFile: path is not a string:', typeof relativePath);
+      return { success: false, error: `Invalid path argument: expected string, got ${typeof relativePath}` };
+    }
+    
+    if (typeof content !== 'string') {
+      console.error('[tools] writeFile: content is not a string:', typeof content);
+      return { success: false, error: `Invalid content argument: expected string, got ${typeof content}` };
     }
 
-    const fullPath = this.resolvePath(relativePath);
-    await mkdir(dirname(fullPath), { recursive: true });
-    await writeFile(fullPath, content, 'utf-8');
-    
-    return { success: true, output: `✓ File created: ${relativePath}` };
+    try {
+      const fullPath = this.resolvePath(relativePath);
+      await mkdir(dirname(fullPath), { recursive: true });
+      await writeFile(fullPath, content, 'utf-8');
+      
+      return { success: true, output: `✓ File created: ${relativePath} (${content.length} bytes)` };
+    } catch (error) {
+      return { success: false, error: `Failed to write file: ${error}` };
+    }
   }
 
   private async readFile(args: Record<string, unknown>): Promise<ToolResult> {
@@ -638,13 +708,57 @@ export class ToolsService {
       return { success: false, error: 'Command blocked for security reasons' };
     }
 
+    // Cross-platform command normalization
+    let normalizedCommand = command;
+    const isWindows = process.platform === 'win32';
+    
+    if (isWindows) {
+      // Convert Linux-style commands to Windows equivalents
+      normalizedCommand = normalizedCommand
+        // Remove background operator - not supported same way on Windows
+        .replace(/\s*&\s*$/, '')
+        // python3 -> python on Windows
+        .replace(/\bpython3\b/g, 'python')
+        // Use 'start' for background processes on Windows (but we'll run sync anyway)
+        // ls -> dir
+        .replace(/^ls\b/, 'dir')
+        // cat -> type
+        .replace(/^cat\b/, 'type')
+        // rm -> del (simple cases)
+        .replace(/^rm\s+(?!-r)/, 'del ')
+        // rm -r -> rmdir /s /q
+        .replace(/^rm\s+-rf?\s+/, 'rmdir /s /q ')
+        // mkdir -p -> mkdir (Windows mkdir creates parents by default)
+        .replace(/mkdir\s+-p\s+/, 'mkdir ')
+        // touch -> type nul >
+        .replace(/^touch\s+(.+)$/, 'type nul > $1')
+        // which -> where
+        .replace(/^which\b/, 'where')
+        // Handle 'cd dir && command' - extract and use cwd instead
+        .replace(/;/g, '&&'); // Normalize semicolons to &&
+    } else {
+      // On Linux/Mac, also remove trailing & for consistency (we run sync)
+      normalizedCommand = normalizedCommand.replace(/\s*&\s*$/, '');
+    }
+    
+    // Handle 'cd directory && rest' pattern - extract working directory
+    let workingDir = this.workspacePath;
+    const cdMatch = normalizedCommand.match(/^cd\s+([^\s&]+)\s*&&\s*(.+)$/);
+    if (cdMatch) {
+      workingDir = resolve(this.workspacePath, cdMatch[1]);
+      normalizedCommand = cdMatch[2];
+    }
+
     this.commandHistory.push(command);
     
+    console.log(`[tools] Executing command: ${normalizedCommand} (in ${workingDir})`);
+    
     try {
-      const { stdout, stderr } = await execAsync(command, {
-        cwd: this.workspacePath,
+      const { stdout, stderr } = await execAsync(normalizedCommand, {
+        cwd: workingDir,
         timeout: timeout as number,
-        maxBuffer: 1024 * 1024 // 1MB
+        maxBuffer: 1024 * 1024, // 1MB
+        shell: isWindows ? 'cmd.exe' : '/bin/bash'
       });
       
       const output = stdout + (stderr ? `\n[stderr]:\n${stderr}` : '');
@@ -951,11 +1065,120 @@ export class ToolsService {
   }
 
   // ============================================
+  // LOCAL SERVER
+  // ============================================
+
+  // Static map to persist servers across ToolsService instances
+  private static runningServers: Map<number, { server: Server; path: string }> = new Map();
+
+  private async startServer(args: Record<string, unknown>): Promise<ToolResult> {
+    const { path: servePath = '.', port = 8080 } = args;
+    const serverPort = port as number;
+    const serverPath = this.resolvePath(servePath as string);
+    
+    // Check if port is already in use by our server
+    if (ToolsService.runningServers.has(serverPort)) {
+      const existing = ToolsService.runningServers.get(serverPort)!;
+      return { 
+        success: true, 
+        output: `Server already running at http://localhost:${serverPort}/ (serving ${existing.path})`
+      };
+    }
+    
+    try {
+      // Create a simple static file server using Node's built-in http module
+      const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+        try {
+          let urlPath = req.url || '/';
+          
+          // Remove query string
+          urlPath = urlPath.split('?')[0];
+          
+          // Default to index.html
+          if (urlPath === '/' || urlPath.endsWith('/')) {
+            urlPath = urlPath + 'index.html';
+          }
+          
+          // Prevent directory traversal
+          const safePath = join(serverPath, urlPath).replace(/\.\./g, '');
+          
+          // Check if file exists
+          if (!existsSync(safePath)) {
+            res.writeHead(404, { 'Content-Type': 'text/plain' });
+            res.end('404 Not Found');
+            return;
+          }
+          
+          // Get file extension and MIME type
+          const ext = extname(safePath).toLowerCase();
+          const mimeType = MIME_TYPES[ext] || 'application/octet-stream';
+          
+          // Stream the file
+          res.writeHead(200, { 
+            'Content-Type': mimeType,
+            'Access-Control-Allow-Origin': '*'
+          });
+          
+          createReadStream(safePath).pipe(res);
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('500 Internal Server Error');
+        }
+      });
+      
+      // Start listening
+      await new Promise<void>((resolvePromise, reject) => {
+        server.on('error', (err: NodeJS.ErrnoException) => {
+          if (err.code === 'EADDRINUSE') {
+            reject(new Error(`Port ${serverPort} is already in use`));
+          } else {
+            reject(err);
+          }
+        });
+        
+        server.listen(serverPort, '127.0.0.1', () => {
+          resolvePromise();
+        });
+      });
+      
+      // Store the server reference
+      ToolsService.runningServers.set(serverPort, { server, path: serverPath });
+      
+      console.log(`[tools] Static server started on port ${serverPort} serving ${serverPath}`);
+      
+      return { 
+        success: true, 
+        output: `✓ Server started at http://localhost:${serverPort}/\nServing files from: ${serverPath}\n\nThe server will remain running. Open the URL in a browser to test.`
+      };
+    } catch (error) {
+      return { 
+        success: false, 
+        error: `Failed to start server: ${error instanceof Error ? error.message : error}`
+      };
+    }
+  }
+  
+  // Method to stop a running server
+  async stopServer(port: number): Promise<ToolResult> {
+    const serverInfo = ToolsService.runningServers.get(port);
+    if (!serverInfo) {
+      return { success: false, error: `No server running on port ${port}` };
+    }
+    
+    return new Promise((resolvePromise) => {
+      serverInfo.server.close(() => {
+        ToolsService.runningServers.delete(port);
+        resolvePromise({ success: true, output: `Server on port ${port} stopped` });
+      });
+    });
+  }
+
+  // ============================================
   // API TESTING TOOLS
   // ============================================
 
   private async httpRequest(args: Record<string, unknown>): Promise<ToolResult> {
-    const { method, url, headers, body } = args;
+    const { method, url, headers, body, timeout = 10000 } = args;
     
     if (typeof method !== 'string' || typeof url !== 'string') {
       return { success: false, error: 'Invalid arguments: method and url must be strings' };
@@ -964,24 +1187,49 @@ export class ToolsService {
     try {
       const requestHeaders: Record<string, string> = {
         'Content-Type': 'application/json',
-        ...JSON.parse(headers as string || '{}')
+        ...(headers ? (typeof headers === 'string' ? JSON.parse(headers) : headers as Record<string, string>) : {})
       };
       
-      const response = await fetch(url, {
-        method,
-        headers: requestHeaders,
-        body: body ? JSON.stringify(JSON.parse(body as string)) : undefined
-      });
+      // Create abort controller for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout as number);
       
-      const responseBody = await response.text();
-      const truncated = responseBody.length > 5000 ? responseBody.substring(0, 5000) + '...' : responseBody;
-      
-      return { 
-        success: response.ok, 
-        output: `HTTP ${response.status} ${response.statusText}\n\n${truncated}`
-      };
+      try {
+        const response = await fetch(url, {
+          method,
+          headers: requestHeaders,
+          body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        const responseBody = await response.text();
+        const truncated = responseBody.length > 5000 ? responseBody.substring(0, 5000) + '...' : responseBody;
+        
+        return { 
+          success: response.ok, 
+          output: `HTTP ${response.status} ${response.statusText}\n\n${truncated}`
+        };
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        throw fetchError;
+      }
     } catch (error) {
-      return { success: false, error: `HTTP request failed: ${error}` };
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Provide helpful error messages
+      if (errorMessage.includes('ECONNREFUSED')) {
+        return { success: false, error: `Connection refused - server may not be running at ${url}` };
+      }
+      if (errorMessage.includes('abort')) {
+        return { success: false, error: `Request timed out after ${timeout}ms` };
+      }
+      if (errorMessage.includes('ENOTFOUND')) {
+        return { success: false, error: `Host not found: ${url}` };
+      }
+      
+      return { success: false, error: `HTTP request failed: ${errorMessage}` };
     }
   }
 
@@ -1103,16 +1351,36 @@ export class ToolsService {
     const toolCalls: ToolCall[] = [];
     let text = content;
 
-    const regex = /<tool_call>([\s\S]*?)<\/tool_call>/g;
+    const regex = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
     let match;
 
     while ((match = regex.exec(content)) !== null) {
       try {
         const jsonStr = match[1].trim();
-        const toolCall = JSON.parse(jsonStr) as ToolCall;
+        const parsed = JSON.parse(jsonStr);
+        
+        // Handle different formats:
+        // Format 1: {"tool": "name", "arguments": {...}}
+        // Format 2: {"name": "name", "parameters": {...}}
+        let toolCall: ToolCall;
+        
+        if (parsed.tool && parsed.arguments) {
+          toolCall = parsed as ToolCall;
+        } else if (parsed.name && parsed.parameters) {
+          // Convert format 2 to format 1
+          toolCall = {
+            tool: parsed.name,
+            arguments: parsed.parameters
+          };
+        } else {
+          console.error('[tools] Unknown tool call format:', parsed);
+          continue;
+        }
+        
         toolCalls.push(toolCall);
       } catch (error) {
         console.error('[tools] Failed to parse tool call:', error);
+        console.error('[tools] Problematic JSON:', match[1].substring(0, 200));
       }
     }
 
@@ -1120,4 +1388,5 @@ export class ToolsService {
 
     return { text, toolCalls };
   }
+
 }

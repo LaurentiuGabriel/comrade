@@ -16,3 +16,4 @@ yarn-error.log*
 *~
 .comrade/
 !.comrade/skills/
+.comrade/config.json

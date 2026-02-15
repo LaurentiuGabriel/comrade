@@ -87,14 +87,24 @@ export const sendMessage = createAsyncThunk(
       const serverUrl = await window.electronAPI.getServerUrl();
       const headers = await getAuthHeaders();
       
-      // Send user message
+      // Add message locally first for immediate UI feedback
+      const messageId = Date.now().toString();
+      dispatch(addMessageToCurrentSession({
+        id: messageId,
+        sessionId,
+        role: 'user',
+        content,
+        timestamp: Date.now(),
+      }));
+      
+      // Send user message to server
       await fetch(`${serverUrl}/sessions/${sessionId}/messages`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ role: 'user', content }),
       });
 
-      return { sessionId, content };
+      return { sessionId, content, messageId };
     } catch (error) {
       return rejectWithValue((error as Error).message);
     }

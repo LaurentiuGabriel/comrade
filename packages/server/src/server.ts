@@ -71,10 +71,22 @@ export function startServer(initialConfig: Partial<ServerConfig> = {}) {
   const llmService = new LLMService(config);
   const sessionService = new SessionService(config);
   const telegramBotService = new TelegramBotService(config, llmService, sessionService);
+  const configService = new ConfigService(config);
+  
+  // Load saved configuration
+  (async () => {
+    try {
+      const loadedConfig = await configService.load();
+      configService.applyLoadedConfig(loadedConfig);
+      console.log('[server] Configuration loaded successfully');
+    } catch (error) {
+      console.error('[server] Failed to load configuration:', error);
+    }
+  })();
   
   const context: ServerContext = {
     config,
-    configService: new ConfigService(config),
+    configService,
     workspaceService: new WorkspaceService(config),
     sessionService,
     skillService: new SkillService(config),

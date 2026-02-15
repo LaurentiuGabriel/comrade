@@ -4,6 +4,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, StopCircle } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useAppDispatch, useAppSelector } from '../hooks.js';
 import { 
   fetchSessions, 
@@ -97,21 +99,52 @@ export function ChatPage() {
     );
   }
 
+  // Get the first user message index to highlight it
+  const firstUserMessageIndex = currentSession.messages.findIndex(m => m.role === 'user');
+
   return (
     <div className="chat-page">
       <div className="messages-container">
-        {currentSession.messages.map((message) => (
-          <div key={message.id} className={`message message-${message.role}`}>
+        {currentSession.messages.map((message, index) => (
+          <div key={message.id} className={`message message-${message.role} ${index === firstUserMessageIndex ? 'first-user-message' : ''}`}>
             <div className="message-header">
               <span className="message-author">
                 {message.role === 'user' ? 'You' : 'Comrade'}
+                {index === firstUserMessageIndex && message.role === 'user' && (
+                  <span className="initial-prompt-badge">Initial Request</span>
+                )}
               </span>
               <span className="message-time">
                 {formatTimestamp(message.timestamp)}
               </span>
             </div>
             <div className="message-content">
-              {message.content}
+              {message.role === 'assistant' ? (
+                <ReactMarkdown 
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    code: ({node, inline, className, children, ...props}: any) => {
+                      const match = /language-(\w+)/.exec(className || '');
+                      return !inline && match ? (
+                        <div className="code-block">
+                          <div className="code-header">{match[1]}</div>
+                          <pre className={className} {...props}>
+                            <code>{children}</code>
+                          </pre>
+                        </div>
+                      ) : (
+                        <code className={className} {...props}>
+                          {children}
+                        </code>
+                      );
+                    }
+                  }}
+                >
+                  {message.content}
+                </ReactMarkdown>
+              ) : (
+                message.content
+              )}
             </div>
           </div>
         ))}
