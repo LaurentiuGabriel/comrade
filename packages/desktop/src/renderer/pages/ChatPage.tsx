@@ -2,7 +2,7 @@
  * Chat Page component
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, StopCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -13,15 +13,19 @@ import {
   sendMessage, 
   streamAssistantResponse,
   setCurrentSession,
-  addMessageToCurrentSession 
+  addMessageToCurrentSession,
+  stopStreaming 
 } from '../slices/sessionSlice.js';
 import { formatTimestamp } from '@comrade/core';
+import { ToolApprovalDialog, ToolApprovalRequest, ToolApprovalResponse } from '../components/ToolApprovalDialog.js';
 
 export function ChatPage() {
   const dispatch = useAppDispatch();
   const { activeWorkspaceId } = useAppSelector((state) => state.workspace);
   const { sessions, currentSession, loading, streaming } = useAppSelector((state) => state.session);
   const [input, setInput] = useState('');
+  const [approvalRequest, setApprovalRequest] = useState<ToolApprovalRequest | null>(null);
+  const [approvalResolver, setApprovalResolver] = useState<((response: ToolApprovalResponse) => void) | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -34,7 +38,30 @@ export function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentSession?.messages]);
 
+  // Tool approval callback - this will be called by the tools service
+  const handleToolApproval = useCallback((request: ToolApprovalRequest): Promise<ToolApprovalResponse> => {
+    return new Promise((resolve) => {
+      setApprovalRequest(request);
+      setApprovalResolver(() => resolve);
+    });
+  }, []);
+
+  // Handle approval response from dialog
+  const handleApprovalResponse = (response: ToolApprovalResponse) => {
+    if (approvalResolver) {
+      approvalResolver(response);
+      setApprovalResolver(null);
+      setApprovalRequest(null);
+    }
+  };
+
   const handleSend = async () => {
+    if (streaming) {
+      // Stop the current streaming
+      stopStreaming();
+      return;
+    }
+
     if (!input.trim() || !activeWorkspaceId) return;
 
     let sessionId = currentSession?.id;
@@ -156,8 +183,13 @@ export function ChatPage() {
         setInput={setInput} 
         onSend={handleSend} 
         onKeyDown={handleKeyDown}
-        disabled={loading || streaming}
+        disabled={loading || !!approvalRequest}
         streaming={streaming}
+      />
+
+      <ToolApprovalDialog 
+        request={approvalRequest}
+        onResponse={handleApprovalResponse}
       />
     </div>
   );
@@ -191,9 +223,10 @@ function ChatInput({
           disabled={disabled}
         />
         <button
-          className="btn btn-primary send-btn"
+          className={`btn btn-primary send-btn ${streaming ? 'stop-btn' : ''}`}
           onClick={onSend}
-          disabled={disabled || !input.trim()}
+          disabled={disabled || (!streaming && !input.trim())}
+          title={streaming ? 'Stop generating' : 'Send message'}
         >
           {streaming ? <StopCircle size={20} /> : <Send size={20} />}
         </button>

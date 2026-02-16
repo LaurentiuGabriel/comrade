@@ -60,20 +60,18 @@ export class ConfigService {
         updatedAt: Date.now(),
       };
 
-      // Save LLM config (without API key for security)
+      // Save LLM config (persist API key for auto-enable on restart)
       if (this.config.llm) {
         savedConfig.llm = {
           ...this.config.llm,
-          apiKey: '[REDACTED]', // Don't save API keys in plain text
+          // Persist API key so LLM auto-enables on restart
+          apiKey: this.config.llm.apiKey || undefined,
         };
       }
 
-      // Save Telegram config (without bot token for security)
+      // Save Telegram config (persist bot token for auto-enable on restart)
       if (this.config.telegram) {
-        savedConfig.telegram = {
-          ...this.config.telegram,
-          botToken: '[REDACTED]', // Don't save tokens in plain text
-        };
+        savedConfig.telegram = this.config.telegram;
       }
 
       // Write to file

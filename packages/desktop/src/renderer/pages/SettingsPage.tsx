@@ -45,11 +45,11 @@ export function SettingsPage() {
 
   useEffect(() => {
     dispatch(fetchLLMProviders());
-    dispatch(fetchLLMConfig());
-    dispatch(fetchLLMStatus());
+    dispatch(fetchLLMConfig(activeWorkspaceId));
+    dispatch(fetchLLMStatus(activeWorkspaceId));
     dispatch(fetchTelegramConfig());
     dispatch(fetchTelegramStatus());
-  }, [dispatch]);
+  }, [dispatch, activeWorkspaceId]);
 
   useEffect(() => {
     if (config) {
@@ -149,7 +149,7 @@ export function SettingsPage() {
   };
 
   const handleSave = async () => {
-    await dispatch(saveLLMConfig(formConfig));
+    await dispatch(saveLLMConfig({ config: formConfig, workspaceId: activeWorkspaceId }));
     setTimeout(() => dispatch(clearLLMError()), 3000);
   };
 

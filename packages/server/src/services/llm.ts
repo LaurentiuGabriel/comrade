@@ -146,6 +146,41 @@ export class LLMService {
     return this.config;
   }
 
+  /**
+   * Get workspace-specific LLM config, or fall back to global config
+   */
+  getWorkspaceConfig(workspaceId: string): LLMConfig | undefined {
+    const workspace = this.serverConfig.workspaces.find(w => w.id === workspaceId);
+    if (workspace?.llmConfig) {
+      return workspace.llmConfig;
+    }
+    // Fall back to global config
+    return this.config || undefined;
+  }
+
+  /**
+   * Update workspace-specific LLM config
+   */
+  updateWorkspaceConfig(workspaceId: string, config: LLMConfig): void {
+    const workspaceIndex = this.serverConfig.workspaces.findIndex(w => w.id === workspaceId);
+    if (workspaceIndex === -1) {
+      throw new Error(`Workspace ${workspaceId} not found`);
+    }
+    
+    // Update the workspace's llmConfig
+    this.serverConfig.workspaces[workspaceIndex].llmConfig = config;
+    this.serverConfig.workspaces[workspaceIndex].updatedAt = Date.now();
+    
+    // Also update the active config if this is the active workspace
+    if (this.serverConfig.activeWorkspaceId === workspaceId) {
+      this.config = config;
+      this.openaiClient = null;
+      this.anthropicClient = null;
+      this.googleClient = null;
+      this.initializeClients();
+    }
+  }
+
   getProviders(): LLMProviderInfo[] {
     return LLM_PROVIDERS;
   }
@@ -154,29 +189,39 @@ export class LLMService {
     return this.config?.enabled === true;
   }
 
-  validateConfig(): { valid: boolean; error?: string } {
-    if (!this.config) {
+  /**
+   * Check if LLM is enabled for a specific workspace
+   */
+  isEnabledForWorkspace(workspaceId: string): boolean {
+    const config = this.getWorkspaceConfig(workspaceId);
+    return config?.enabled === true;
+  }
+
+  validateConfig(config?: LLMConfig): { valid: boolean; error?: string } {
+    const cfg = config || this.config;
+    
+    if (!cfg) {
       return { valid: false, error: 'LLM configuration not found' };
     }
 
-    if (!this.config.enabled) {
+    if (!cfg.enabled) {
       return { valid: false, error: 'LLM is not enabled' };
     }
 
-    if (!this.config.provider) {
+    if (!cfg.provider) {
       return { valid: false, error: 'Provider is required' };
     }
 
-    if (!this.config.model) {
+    if (!cfg.model) {
       return { valid: false, error: 'Model is required' };
     }
 
-    const providerInfo = LLM_PROVIDERS.find(p => p.id === this.config!.provider);
+    const providerInfo = LLM_PROVIDERS.find(p => p.id === cfg.provider);
     if (!providerInfo) {
       return { valid: false, error: 'Invalid provider' };
     }
 
-    if (providerInfo.requiresApiKey && !this.config.apiKey) {
+    if (providerInfo.requiresApiKey && !cfg.apiKey) {
       return { valid: false, error: `API key is required for ${providerInfo.name}` };
     }
 
@@ -212,8 +257,17 @@ export class LLMService {
    * AGENTIC CHAT: True ReAct (Reasoning + Acting) implementation
    * The agent thinks, plans, executes, observes, and repeats until done
    */
-  async *agenticChat(messages: LLMMessage[]): AsyncGenerator<LLMStreamChunk> {
-    const validation = this.validateConfig();
+  async *agenticChat(messages: LLMMessage[], workspaceId?: string): AsyncGenerator<LLMStreamChunk> {
+    // Get workspace-specific or global config
+    const workspaceConfig = workspaceId ? this.getWorkspaceConfig(workspaceId) : (this.config || undefined);
+    
+    if (!workspaceConfig) {
+      yield { content: '', done: true, error: 'LLM configuration not found' };
+      return;
+    }
+    
+    const validation = this.validateConfig(workspaceConfig);
+    
     if (!validation.valid) {
       yield { content: '', done: true, error: validation.error };
       return;
@@ -244,17 +298,17 @@ Keep the plan concise (3-6 steps). Do NOT include actual file contents or code.`
 
     // Get the plan using text-only mode for planning
     let plan = '';
-    switch (this.config!.provider) {
+    switch (workspaceConfig!.provider) {
       case 'openai':
-        const openaiPlan = await this.callOpenAIWithTools(planningMessages, false); // false = no tool forcing
+        const openaiPlan = await this.callOpenAIWithTools(planningMessages, false, workspaceConfig); // false = no tool forcing
         plan = openaiPlan.content;
         break;
       case 'anthropic':
-        const anthropicPlan = await this.callAnthropicWithTools(planningMessages, false);
+        const anthropicPlan = await this.callAnthropicWithTools(planningMessages, false, workspaceConfig);
         plan = anthropicPlan.content;
         break;
       default:
-        plan = await this.collectStreamText(planningMessages);
+        plan = await this.collectStreamText(planningMessages, workspaceConfig);
     }
     
     yield { content: `\n**Plan:**\n${plan}\n`, done: false };
@@ -293,20 +347,20 @@ Execute ONE tool at a time. After each tool result, continue with the next actio
         let toolCalls: Array<{name: string; arguments: string; id?: string}> = [];
         
         // Get response from LLM
-        switch (this.config!.provider) {
+    switch (workspaceConfig!.provider) {
           case 'openai':
-            const openaiResult = await this.callOpenAIWithTools(currentMessages);
+            const openaiResult = await this.callOpenAIWithTools(currentMessages, true, workspaceConfig);
             assistantContent = openaiResult.content;
             toolCalls = openaiResult.toolCalls;
             break;
           case 'anthropic':
-            const anthropicResult = await this.callAnthropicWithTools(currentMessages);
+            const anthropicResult = await this.callAnthropicWithTools(currentMessages, true, workspaceConfig);
             assistantContent = anthropicResult.content;
             toolCalls = anthropicResult.toolCalls;
             break;
           case 'google':
           case 'ollama':
-            const textResult = await this.collectStreamText(currentMessages);
+            const textResult = await this.collectStreamText(currentMessages, workspaceConfig);
             assistantContent = textResult;
             const { toolCalls: parsedCalls } = this.toolsService.parseToolCalls(textResult);
             if (parsedCalls.length > 0) {
@@ -326,7 +380,7 @@ Execute ONE tool at a time. After each tool result, continue with the next actio
         currentMessages.push({ role: 'assistant', content: assistantContent });
 
         // If no tool calls from native API provider (OpenAI/Anthropic), FORCE it to use tools
-        if (toolCalls.length === 0 && (this.config!.provider === 'openai' || this.config!.provider === 'anthropic')) {
+        if (toolCalls.length === 0 && (workspaceConfig!.provider === 'openai' || workspaceConfig!.provider === 'anthropic')) {
           yield { content: '\n⚠️ **LLM did not use tools - forcing execution...**\n', done: false };
           
           // Check if this looks like a description that should be a tool call
@@ -358,7 +412,7 @@ CALL A TOOL IMMEDIATELY.`
         }
         
         // For non-native providers (Google/Ollama), try pseudo-code detection
-        if (toolCalls.length === 0 && (this.config!.provider === 'google' || this.config!.provider === 'ollama')) {
+        if (toolCalls.length === 0 && (workspaceConfig!.provider === 'google' || workspaceConfig!.provider === 'ollama')) {
           const pseudoToolCalls = this.detectPseudoToolCalls(assistantContent);
           if (pseudoToolCalls.length > 0) {
             yield { content: `[Converting ${pseudoToolCalls.length} described actions to tool calls...]\n`, done: false };
@@ -499,20 +553,21 @@ CALL A TOOL IMMEDIATELY.`
     }
   }
 
-  private async callOpenAIWithTools(messages: LLMMessage[], forceTools: boolean = true): Promise<{content: string; toolCalls: Array<{name: string; arguments: string; id: string}>}> {
+  private async callOpenAIWithTools(messages: LLMMessage[], forceTools: boolean = true, config?: LLMConfig): Promise<{content: string; toolCalls: Array<{name: string; arguments: string; id: string}>}> {
     if (!this.openaiClient) {
       throw new Error('OpenAI client not initialized');
     }
 
+    const cfg = config || this.config!;
     const tools = toOpenAIFunctions(AVAILABLE_TOOLS);
     
     const response = await this.openaiClient.chat.completions.create({
-      model: this.config!.model,
+      model: cfg.model,
       messages: messages.map(m => ({ role: m.role, content: m.content })),
       tools: forceTools ? tools : undefined,
-      tool_choice: forceTools ? 'required' : 'auto', // FORCE the model to use tools when forceTools is true
+      tool_choice: forceTools ? 'required' : undefined, // Only set tool_choice when tools are provided
       temperature: 0.1, // Lower temperature for more deterministic tool use
-      max_tokens: this.config!.maxTokens,
+      max_tokens: cfg.maxTokens,
     });
 
     const message = response.choices[0].message;
@@ -556,11 +611,12 @@ CALL A TOOL IMMEDIATELY.`
     return { content, toolCalls };
   }
 
-  private async callAnthropicWithTools(messages: LLMMessage[], forceTools: boolean = true): Promise<{content: string; toolCalls: Array<{name: string; arguments: string; id: string}>}> {
+  private async callAnthropicWithTools(messages: LLMMessage[], forceTools: boolean = true, config?: LLMConfig): Promise<{content: string; toolCalls: Array<{name: string; arguments: string; id: string}>}> {
     if (!this.anthropicClient) {
       throw new Error('Anthropic client not initialized');
     }
 
+    const cfg = config || this.config!;
     const tools = toAnthropicTools(AVAILABLE_TOOLS);
     
     const systemMessage = messages.find(m => m.role === 'system');
@@ -570,12 +626,12 @@ CALL A TOOL IMMEDIATELY.`
     }));
 
     // Use higher max_tokens to ensure content isn't truncated
-    const maxTokens = Math.max(this.config!.maxTokens || 4096, 16384);
+    const maxTokens = Math.max(cfg.maxTokens || 4096, 16384);
     
-    console.log(`[llm] Anthropic API call with max_tokens=${maxTokens}, model=${this.config!.model}`);
+    console.log(`[llm] Anthropic API call with max_tokens=${maxTokens}, model=${cfg.model}`);
     
     const response = await this.anthropicClient.messages.create({
-      model: this.config!.model,
+      model: cfg.model,
       max_tokens: maxTokens,
       temperature: 0.1, // Low temperature for deterministic tool use
       system: systemMessage?.content,
@@ -655,19 +711,20 @@ CALL A TOOL IMMEDIATELY.`
     return { content, toolCalls };
   }
 
-  private async collectStreamText(messages: LLMMessage[]): Promise<string> {
+  private async collectStreamText(messages: LLMMessage[], config?: LLMConfig): Promise<string> {
     let fullText = '';
+    const cfg = config || this.config!;
     
-    switch (this.config!.provider) {
+    switch (cfg.provider) {
       case 'google':
-        for await (const chunk of this.streamGoogle(messages)) {
+        for await (const chunk of this.streamGoogle(messages, cfg)) {
           if (chunk.content) {
             fullText += chunk.content;
           }
         }
         break;
       case 'ollama':
-        for await (const chunk of this.streamOllama(messages)) {
+        for await (const chunk of this.streamOllama(messages, cfg)) {
           if (chunk.content) {
             fullText += chunk.content;
           }
@@ -735,13 +792,14 @@ CALL A TOOL IMMEDIATELY.`
     yield { content: '', done: true };
   }
 
-  private async *streamGoogle(messages: LLMMessage[]): AsyncGenerator<LLMStreamChunk> {
+  private async *streamGoogle(messages: LLMMessage[], config?: LLMConfig): AsyncGenerator<LLMStreamChunk> {
     if (!this.googleClient) {
       yield { content: '', done: true, error: 'Google client not initialized' };
       return;
     }
 
-    const model = this.googleClient.getGenerativeModel({ model: this.config!.model });
+    const cfg = config || this.config!;
+    const model = this.googleClient.getGenerativeModel({ model: cfg.model });
 
     const systemMessage = messages.find(m => m.role === 'system');
     const chatMessages = messages.filter(m => m.role !== 'system');
@@ -759,9 +817,9 @@ CALL A TOOL IMMEDIATELY.`
       history,
       systemInstruction: systemMessage?.content,
       generationConfig: {
-        temperature: this.config!.temperature ?? 0.7,
-        maxOutputTokens: this.config!.maxTokens,
-        topP: this.config!.topP,
+        temperature: cfg.temperature ?? 0.7,
+        maxOutputTokens: cfg.maxTokens,
+        topP: cfg.topP,
       },
     });
 
@@ -778,16 +836,17 @@ CALL A TOOL IMMEDIATELY.`
     yield { content: '', done: true };
   }
 
-  private async *streamOllama(messages: LLMMessage[]): AsyncGenerator<LLMStreamChunk> {
+  private async *streamOllama(messages: LLMMessage[], config?: LLMConfig): AsyncGenerator<LLMStreamChunk> {
     try {
+      const cfg = config || this.config!;
       const response = await ollama.chat({
-        model: this.config!.model,
+        model: cfg.model,
         messages: messages.map(m => ({ role: m.role, content: m.content })),
         stream: true,
         options: {
-          temperature: this.config!.temperature ?? 0.7,
-          num_predict: this.config!.maxTokens,
-          top_p: this.config!.topP,
+          temperature: cfg.temperature ?? 0.7,
+          num_predict: cfg.maxTokens,
+          top_p: cfg.topP,
         },
       });
 
@@ -807,10 +866,11 @@ CALL A TOOL IMMEDIATELY.`
 
   /**
    * Legacy streamChat method (maintains backward compatibility)
+   * Supports workspace-specific LLM configurations
    */
-  async *streamChat(messages: LLMMessage[]): AsyncGenerator<LLMStreamChunk> {
+  async *streamChat(messages: LLMMessage[], workspaceId?: string): AsyncGenerator<LLMStreamChunk> {
     // Use agentic chat by default for better tool execution
-    yield* this.agenticChat(messages);
+    yield* this.agenticChat(messages, workspaceId);
   }
 
   /**
@@ -1079,7 +1139,7 @@ Output ONLY the file content, nothing else.`
     try {
       let content = '';
       
-      switch (this.config!.provider) {
+      switch (this.config?.provider) {
         case 'anthropic':
           if (!this.anthropicClient) return null;
           

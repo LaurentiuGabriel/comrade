@@ -11,6 +11,7 @@ interface SessionState {
   loading: boolean;
   error: string | null;
   streaming: boolean;
+  abortController: AbortController | null;
 }
 
 const initialState: SessionState = {
@@ -19,6 +20,7 @@ const initialState: SessionState = {
   loading: false,
   error: null,
   streaming: false,
+  abortController: null,
 };
 
 // Helper function to get auth headers
@@ -111,6 +113,9 @@ export const sendMessage = createAsyncThunk(
   }
 );
 
+// Abort controller for active streaming session
+let activeAbortController: AbortController | null = null;
+
 export const streamAssistantResponse = createAsyncThunk(
   'session/streamAssistantResponse',
   async ({ sessionId, workspaceId, messages }: { sessionId: string; workspaceId: string; messages: Array<{ role: string; content: string }> }, { dispatch, rejectWithValue }) => {
@@ -125,6 +130,9 @@ export const streamAssistantResponse = createAsyncThunk(
       if (!status.enabled || !status.valid) {
         throw new Error(status.error || 'LLM is not configured. Please configure an LLM provider in Settings.');
       }
+      
+      // Create abort controller for this streaming session
+      activeAbortController = new AbortController();
       
       // Start streaming
       dispatch(setStreaming(true));
@@ -146,6 +154,7 @@ export const streamAssistantResponse = createAsyncThunk(
           'Accept': 'text/event-stream'
         },
         body: JSON.stringify({ messages, workspaceId }),
+        signal: activeAbortController.signal,
       });
 
       if (!response.ok) {
@@ -179,6 +188,7 @@ export const streamAssistantResponse = createAsyncThunk(
                   content: `⚠️ Error: ${data.error}`,
                 }));
                 dispatch(setStreaming(false));
+                activeAbortController = null;
                 return;
               }
 
@@ -201,6 +211,7 @@ export const streamAssistantResponse = createAsyncThunk(
 
               if (data.done) {
                 dispatch(setStreaming(false));
+                activeAbortController = null;
                 return;
               }
             } catch {
@@ -211,8 +222,17 @@ export const streamAssistantResponse = createAsyncThunk(
       }
 
       dispatch(setStreaming(false));
+      activeAbortController = null;
     } catch (error) {
       dispatch(setStreaming(false));
+      activeAbortController = null;
+      
+      // Check if this was an abort error
+      if (error instanceof Error && error.name === 'AbortError') {
+        // Don't treat abort as an error - user stopped the stream
+        return;
+      }
+      
       return rejectWithValue((error as Error).message);
     }
   }
@@ -241,6 +261,9 @@ const sessionSlice = createSlice({
     setStreaming: (state, action: PayloadAction<boolean>) => {
       state.streaming = action.payload;
     },
+    setAbortController: (state, action: PayloadAction<AbortController | null>) => {
+      state.abortController = action.payload;
+    },
     clearError: (state) => {
       state.error = null;
     },
@@ -265,5 +288,13 @@ const sessionSlice = createSlice({
   },
 });
 
-export const { setCurrentSession, addMessageToCurrentSession, updateAssistantMessage, setStreaming, clearError } = sessionSlice.actions;
+export const { setCurrentSession, addMessageToCurrentSession, updateAssistantMessage, setStreaming, setAbortController, clearError } = sessionSlice.actions;
 export default sessionSlice.reducer;
+
+// Helper function to stop streaming
+export const stopStreaming = () => {
+  if (activeAbortController) {
+    activeAbortController.abort();
+    activeAbortController = null;
+  }
+};

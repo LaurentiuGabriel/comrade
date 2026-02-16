@@ -347,8 +347,11 @@ export function setupRoutes(app: Router, context: ServerContext): void {
     res.json({ items: providers });
   });
 
-  app.get('/llm/config', (_req: Request, res: Response) => {
-    const config = context.llmService.getConfig();
+  app.get('/llm/config', (req: Request, res: Response) => {
+    const workspaceId = req.query.workspaceId as string | undefined;
+    const config = workspaceId 
+      ? context.llmService.getWorkspaceConfig(workspaceId)
+      : context.llmService.getConfig();
     res.json({ config });
   });
 
@@ -357,13 +360,21 @@ export function setupRoutes(app: Router, context: ServerContext): void {
       return res.status(403).json({ code: 'read_only', message: 'Server is in read-only mode' });
     }
 
-    const config = req.body;
-    context.llmService.updateConfig(config);
+    const { workspaceId, ...config } = req.body;
+    
+    if (workspaceId) {
+      // Save workspace-specific config
+      context.llmService.updateWorkspaceConfig(workspaceId, config);
+      console.log(`[routes] LLM configuration saved for workspace ${workspaceId}`);
+    } else {
+      // Save global config (fallback)
+      context.llmService.updateConfig(config);
+      console.log('[routes] Global LLM configuration saved');
+    }
     
     // Save configuration to file
     try {
       await context.configService.save();
-      console.log('[routes] LLM configuration saved');
     } catch (error) {
       console.error('[routes] Failed to save LLM configuration:', error);
     }
@@ -371,10 +382,15 @@ export function setupRoutes(app: Router, context: ServerContext): void {
     res.json({ success: true });
   });
 
-  app.get('/llm/status', (_req: Request, res: Response) => {
-    const validation = context.llmService.validateConfig();
+  app.get('/llm/status', (req: Request, res: Response) => {
+    const workspaceId = req.query.workspaceId as string | undefined;
+    const config = workspaceId
+      ? context.llmService.getWorkspaceConfig(workspaceId)
+      : context.llmService.getConfig();
+    
+    const validation = context.llmService.validateConfig(config || undefined);
     res.json({
-      enabled: context.llmService.isEnabled(),
+      enabled: config?.enabled || false,
       valid: validation.valid,
       error: validation.error,
     });
@@ -421,7 +437,7 @@ export function setupRoutes(app: Router, context: ServerContext): void {
     res.setHeader('Connection', 'keep-alive');
 
     try {
-      const stream = context.llmService.streamChat(messages);
+      const stream = context.llmService.streamChat(messages, workspaceId);
       let fullContent = '';
       
       for await (const chunk of stream) {
@@ -512,5 +528,61 @@ export function setupRoutes(app: Router, context: ServerContext): void {
   app.post('/telegram/validate', (req: AuthenticatedRequest, res: Response) => {
     const validation = context.telegramBotService.validateConfig();
     res.json(validation);
+  });
+
+  // Tool Approval
+  app.get('/tools/approval-status', (req: AuthenticatedRequest, res: Response) => {
+    const status = context.toolsService.getApprovalStatus();
+    res.json(status);
+  });
+
+  app.post('/tools/clear-approvals', (req: AuthenticatedRequest, res: Response) => {
+    if (context.config.readOnly) {
+      return res.status(403).json({ code: 'read_only', message: 'Server is in read-only mode' });
+    }
+    
+    context.toolsService.clearApprovals();
+    res.json({ success: true, message: 'All tool approvals cleared' });
+  });
+
+  // Tool approval request - called by the desktop app when a tool needs approval
+  app.post('/tools/request-approval', (req: AuthenticatedRequest, res: Response) => {
+    const { tool, arguments: args, timestamp } = req.body;
+    
+    if (!tool) {
+      return res.status(400).json({ code: 'invalid_request', message: 'Tool name is required' });
+    }
+
+    // Store the approval request in the context for the desktop app to pick up
+    context.pendingToolApproval = {
+      tool,
+      arguments: args,
+      timestamp: timestamp || Date.now()
+    };
+
+    res.json({ 
+      success: true, 
+      message: 'Approval request registered',
+      requestId: timestamp 
+    });
+  });
+
+  // Tool approval response - called by the desktop app with user's decision
+  app.post('/tools/approve', (req: AuthenticatedRequest, res: Response) => {
+    const { allowed, allowAll } = req.body;
+    
+    if (context.pendingToolApproval && context.approvalResolver) {
+      context.approvalResolver({ allowed, allowAll });
+      context.pendingToolApproval = null;
+      context.approvalResolver = null;
+      res.json({ success: true, message: 'Approval response recorded' });
+    } else {
+      res.status(400).json({ code: 'no_pending_approval', message: 'No pending tool approval found' });
+    }
+  });
+
+  // Get current pending approval (for desktop app polling)
+  app.get('/tools/pending-approval', (req: AuthenticatedRequest, res: Response) => {
+    res.json(context.pendingToolApproval || null);
   });
 }

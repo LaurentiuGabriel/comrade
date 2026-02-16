@@ -11,6 +11,7 @@ export interface Workspace {
   baseUrl?: string;
   createdAt: number;
   updatedAt?: number;
+  llmConfig?: LLMConfig; // Workspace-specific LLM configuration
 }
 
 export interface WorkspaceConfig {

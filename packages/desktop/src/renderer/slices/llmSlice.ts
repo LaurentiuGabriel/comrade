@@ -64,11 +64,14 @@ export const fetchLLMProviders = createAsyncThunk(
 
 export const fetchLLMConfig = createAsyncThunk(
   'llm/fetchConfig',
-  async (_, { rejectWithValue }) => {
+  async (workspaceId: string | undefined, { rejectWithValue }) => {
     try {
       const serverUrl = await window.electronAPI.getServerUrl();
       const headers = await getAuthHeaders();
-      const response = await fetch(`${serverUrl}/llm/config`, { headers });
+      const url = workspaceId 
+        ? `${serverUrl}/llm/config?workspaceId=${encodeURIComponent(workspaceId)}`
+        : `${serverUrl}/llm/config`;
+      const response = await fetch(url, { headers });
       
       if (!response.ok) {
         const error = await response.json().catch(() => ({ message: 'Unknown error' }));
@@ -85,11 +88,14 @@ export const fetchLLMConfig = createAsyncThunk(
 
 export const fetchLLMStatus = createAsyncThunk(
   'llm/fetchStatus',
-  async (_, { rejectWithValue }) => {
+  async (workspaceId: string | undefined, { rejectWithValue }) => {
     try {
       const serverUrl = await window.electronAPI.getServerUrl();
       const headers = await getAuthHeaders();
-      const response = await fetch(`${serverUrl}/llm/status`, { headers });
+      const url = workspaceId 
+        ? `${serverUrl}/llm/status?workspaceId=${encodeURIComponent(workspaceId)}`
+        : `${serverUrl}/llm/status`;
+      const response = await fetch(url, { headers });
       
       if (!response.ok) {
         const error = await response.json().catch(() => ({ message: 'Unknown error' }));
@@ -106,14 +112,14 @@ export const fetchLLMStatus = createAsyncThunk(
 
 export const saveLLMConfig = createAsyncThunk(
   'llm/saveConfig',
-  async (config: LLMConfig, { rejectWithValue, dispatch }) => {
+  async ({ config, workspaceId }: { config: LLMConfig; workspaceId?: string }, { rejectWithValue, dispatch }) => {
     try {
       const serverUrl = await window.electronAPI.getServerUrl();
       const headers = await getAuthHeaders();
       const response = await fetch(`${serverUrl}/llm/config`, {
         method: 'POST',
         headers,
-        body: JSON.stringify(config),
+        body: JSON.stringify({ ...config, workspaceId }),
       });
       
       if (!response.ok) {
@@ -122,7 +128,7 @@ export const saveLLMConfig = createAsyncThunk(
       }
 
       // Refresh status after saving
-      dispatch(fetchLLMStatus());
+      dispatch(fetchLLMStatus(workspaceId));
       
       return config;
     } catch (error) {

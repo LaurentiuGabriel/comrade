@@ -16,6 +16,7 @@ import { AuditService } from './services/audit.js';
 import { TokenService } from './services/token.js';
 import { LLMService } from './services/llm.js';
 import { TelegramBotService } from './services/telegram.js';
+import { ToolsService, ToolApproval, ToolApprovalResponse } from './services/tools.js';
 import { errorHandler } from './middleware/error.js';
 import { authMiddleware } from './middleware/auth.js';
 import { setupRoutes } from './routes/index.js';
@@ -32,6 +33,10 @@ export interface ServerContext {
   tokenService: TokenService;
   llmService: LLMService;
   telegramBotService: TelegramBotService;
+  toolsService: ToolsService;
+  // Tool approval state
+  pendingToolApproval: ToolApproval | null;
+  approvalResolver: ((response: ToolApprovalResponse) => void) | null;
 }
 
 export function startServer(initialConfig: Partial<ServerConfig> = {}) {
@@ -78,11 +83,20 @@ export function startServer(initialConfig: Partial<ServerConfig> = {}) {
     try {
       const loadedConfig = await configService.load();
       configService.applyLoadedConfig(loadedConfig);
+      
+      // Re-initialize LLM service with loaded config (to auto-enable if configured)
+      if (config.llm && config.llm.enabled && config.llm.apiKey) {
+        llmService.updateConfig(config.llm);
+        console.log('[server] LLM auto-enabled from saved configuration');
+      }
+      
       console.log('[server] Configuration loaded successfully');
     } catch (error) {
       console.error('[server] Failed to load configuration:', error);
     }
   })();
+  
+  const toolsService = new ToolsService(config);
   
   const context: ServerContext = {
     config,
@@ -94,7 +108,21 @@ export function startServer(initialConfig: Partial<ServerConfig> = {}) {
     tokenService: new TokenService(config),
     llmService,
     telegramBotService,
+    toolsService,
+    pendingToolApproval: null,
+    approvalResolver: null,
   };
+
+  // Set up the approval callback for the tools service
+  toolsService.setApprovalCallback(async (approval) => {
+    // Store the pending approval in context
+    context.pendingToolApproval = approval;
+    
+    // Return a promise that resolves when the user responds
+    return new Promise((resolve) => {
+      context.approvalResolver = resolve;
+    });
+  });
 
   // Middleware
   app.use(cors({
