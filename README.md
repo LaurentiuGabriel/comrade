@@ -27,7 +27,7 @@
 
 ## Available Tools
 
-Comrade provides a comprehensive suite of **20+ agentic tools** that the AI can execute directly:
+Comrade provides a comprehensive suite of **25+ agentic tools** that the AI can execute directly:
 
 ### 📁 File System Tools
 - **`write_file`** - Create or overwrite files with content (path + content required)
@@ -73,6 +73,42 @@ Comrade provides a comprehensive suite of **20+ agentic tools** that the AI can 
 
 ### 📚 Documentation
 - **`generate_documentation`** - Generate docs from code comments
+
+### 🔌 MCP (Model Context Protocol) Tools
+Connect to external MCP servers to extend the agent's capabilities:
+
+- **`mcp_connect`** - Connect to an MCP server
+  - Supports SSE (Server-Sent Events) and stdio transports
+  - Example: `{"server_url": "http://localhost:3001/sse", "name": "my-server", "transport": "sse"}`
+  - Example (stdio): `{"server_url": "/path/to/server", "name": "local-server", "transport": "stdio"}`
+  
+- **`mcp_list_tools`** - List all available tools from a connected MCP server
+  - Shows tool names, descriptions, and required parameters
+  
+- **`mcp_invoke_tool`** - Invoke a tool from an MCP server
+  - Execute external tools like database queries, file system access, or third-party APIs
+  - Example: `{"connection_name": "my-server", "tool_name": "query_database", "arguments": {"table": "users"}}`
+  
+- **`mcp_disconnect`** - Disconnect from an MCP server
+  - Clean up connections and free resources
+  
+- **`mcp_list_connections`** - List all active MCP connections
+  - Shows connection status and available tool counts
+
+**What is MCP?** MCP (Model Context Protocol) is an open protocol that enables AI systems to connect to external data sources and tools. By connecting to MCP servers, Comrade can access:
+- Databases (PostgreSQL, MySQL, MongoDB, etc.)
+- Cloud services (AWS, GCP, Azure)
+- Development tools (GitHub, Jira, Slack)
+- File systems and document stores
+- Custom business logic and APIs
+
+**Example MCP Workflow:**
+```
+1. mcp_connect: {"server_url": "http://localhost:3001/sse", "name": "postgres-db"}
+2. mcp_list_tools: {"connection_name": "postgres-db"}
+3. mcp_invoke_tool: {"connection_name": "postgres-db", "tool_name": "execute_query", "arguments": {"sql": "SELECT * FROM users"}}
+4. mcp_disconnect: {"connection_name": "postgres-db"}
+```
 
 ### Tool Usage
 

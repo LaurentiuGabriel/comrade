@@ -6,7 +6,6 @@
 import { ServerConfig, LLMConfig, TelegramConfig, Skill } from '@comrade/core';
 import { writeFile, readFile, mkdir, access } from 'fs/promises';
 import { dirname, join } from 'path';
-import { homedir } from 'os';
 
 export interface SavedConfig {
   version: number;
@@ -28,13 +27,10 @@ export class ConfigService {
   
   constructor(
     private config: ServerConfig,
-    dataDir?: string
+    dataDir: string = '.comrade'
   ) {
-    // Use home directory for consistent config location across restarts
-    this.dataDir = dataDir || join(homedir(), '.comrade');
-    this.configPath = join(this.dataDir, 'config.json');
-    console.log(`[config] Config directory: ${this.dataDir}`);
-    console.log(`[config] Config file path: ${this.configPath}`);
+    this.dataDir = dataDir;
+    this.configPath = join(dataDir, 'config.json');
   }
 
   /**
@@ -64,14 +60,20 @@ export class ConfigService {
         updatedAt: Date.now(),
       };
 
-      // Save LLM config (with API key for persistence)
+      // Save LLM config (without API key for security)
       if (this.config.llm) {
-        savedConfig.llm = { ...this.config.llm };
+        savedConfig.llm = {
+          ...this.config.llm,
+          apiKey: '[REDACTED]', // Don't save API keys in plain text
+        };
       }
 
-      // Save Telegram config (with bot token for persistence)
+      // Save Telegram config (without bot token for security)
       if (this.config.telegram) {
-        savedConfig.telegram = { ...this.config.telegram };
+        savedConfig.telegram = {
+          ...this.config.telegram,
+          botToken: '[REDACTED]', // Don't save tokens in plain text
+        };
       }
 
       // Write to file

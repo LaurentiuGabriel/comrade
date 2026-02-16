@@ -11,6 +11,7 @@ import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
 import { createHash } from 'crypto';
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
+import { MCPService, MCPTool } from './mcp.js';
 
 const execAsync = promisify(exec);
 
@@ -331,6 +332,66 @@ IMPORTANT: Both path AND content are REQUIRED. The content field must contain al
       },
       required: ['type']
     }
+  },
+  
+  // MCP (Model Context Protocol) Tools
+  {
+    name: 'mcp_connect',
+    description: 'Connect to an MCP (Model Context Protocol) server. MCP servers provide external tools and data sources that extend the agent\'s capabilities. Once connected, you can list and invoke tools from this server.',
+    parameters: {
+      type: 'object',
+      properties: {
+        server_url: { type: 'string', description: 'The URL of the MCP server to connect to (e.g., http://localhost:3001/sse or via stdio)' },
+        name: { type: 'string', description: 'A unique name to identify this connection' },
+        transport: { type: 'string', description: 'Transport type: "sse" (Server-Sent Events) or "stdio" (Standard IO)' },
+        env: { type: 'object', description: 'Environment variables as key-value pairs (optional, for stdio transport)' }
+      },
+      required: ['server_url', 'name']
+    }
+  },
+  {
+    name: 'mcp_list_tools',
+    description: 'List all available tools from a connected MCP server. Returns tool names, descriptions, and required parameters.',
+    parameters: {
+      type: 'object',
+      properties: {
+        connection_name: { type: 'string', description: 'The connection name used in mcp_connect' }
+      },
+      required: ['connection_name']
+    }
+  },
+  {
+    name: 'mcp_invoke_tool',
+    description: 'Invoke a tool from a connected MCP server. This allows the agent to use external capabilities like database access, file systems, or third-party APIs.',
+    parameters: {
+      type: 'object',
+      properties: {
+        connection_name: { type: 'string', description: 'The connection name used in mcp_connect' },
+        tool_name: { type: 'string', description: 'The name of the tool to invoke' },
+        arguments: { type: 'object', description: 'The tool arguments as a JSON object' }
+      },
+      required: ['connection_name', 'tool_name']
+    }
+  },
+  {
+    name: 'mcp_disconnect',
+    description: 'Disconnect from an MCP server. This cleans up the connection and frees resources.',
+    parameters: {
+      type: 'object',
+      properties: {
+        connection_name: { type: 'string', description: 'The connection name used in mcp_connect' }
+      },
+      required: ['connection_name']
+    }
+  },
+  {
+    name: 'mcp_list_connections',
+    description: 'List all active MCP connections and their status.',
+    parameters: {
+      type: 'object',
+      properties: {},
+      required: []
+    }
   }
 ];
 
@@ -405,12 +466,14 @@ To use a tool, wrap the JSON in <tool_call> tags. The system will execute it and
 export class ToolsService {
   private workspacePath: string;
   private commandHistory: string[] = [];
+  private mcpService: MCPService;
 
   constructor(private serverConfig: ServerConfig) {
     const activeWorkspace = serverConfig.workspaces.find(
       w => w.id === serverConfig.activeWorkspaceId
     );
     this.workspacePath = activeWorkspace?.path || process.cwd();
+    this.mcpService = new MCPService();
   }
 
   setWorkspace(workspacePath: string): void {
@@ -479,6 +542,18 @@ export class ToolsService {
         // Documentation
         case 'generate_documentation':
           return await this.generateDocumentation(call.arguments);
+        
+        // MCP Tools
+        case 'mcp_connect':
+          return await this.mcpConnect(call.arguments);
+        case 'mcp_list_tools':
+          return await this.mcpListTools(call.arguments);
+        case 'mcp_invoke_tool':
+          return await this.mcpInvokeTool(call.arguments);
+        case 'mcp_disconnect':
+          return await this.mcpDisconnect(call.arguments);
+        case 'mcp_list_connections':
+          return await this.mcpListConnections();
         
         default:
           return { success: false, error: `Unknown tool: ${call.tool}` };
@@ -1387,6 +1462,127 @@ export class ToolsService {
     text = content.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
 
     return { text, toolCalls };
+  }
+
+  // ============================================
+  // MCP TOOLS
+  // ============================================
+
+  private async mcpConnect(args: Record<string, unknown>): Promise<ToolResult> {
+    const { server_url, name, transport = 'sse', env } = args;
+    
+    if (typeof server_url !== 'string' || typeof name !== 'string') {
+      return { success: false, error: 'Invalid arguments: server_url and name must be strings' };
+    }
+
+    try {
+      await this.mcpService.connect(
+        name,
+        server_url,
+        transport as 'sse' | 'stdio',
+        env as Record<string, string>
+      );
+      
+      const connection = this.mcpService.getConnection(name);
+      const toolCount = connection?.tools.length || 0;
+      
+      return { 
+        success: true, 
+        output: `✓ Connected to MCP server '${name}' at ${server_url}\nTransport: ${transport}\nAvailable tools: ${toolCount}`
+      };
+    } catch (error) {
+      return { success: false, error: `Failed to connect to MCP server: ${error}` };
+    }
+  }
+
+  private async mcpListTools(args: Record<string, unknown>): Promise<ToolResult> {
+    const { connection_name } = args;
+    
+    if (typeof connection_name !== 'string') {
+      return { success: false, error: 'Invalid arguments: connection_name must be a string' };
+    }
+
+    try {
+      const tools = this.mcpService.listTools(connection_name);
+      
+      if (tools.length === 0) {
+        return { success: true, output: `No tools available on connection '${connection_name}'` };
+      }
+      
+      const toolsList = tools.map((tool, i) => 
+        `${i + 1}. ${tool.name}\n   ${tool.description}\n   Parameters: ${Object.keys(tool.parameters.properties).join(', ')}`
+      ).join('\n\n');
+      
+      return { 
+        success: true, 
+        output: `Available tools on '${connection_name}':\n\n${toolsList}`
+      };
+    } catch (error) {
+      return { success: false, error: `Failed to list tools: ${error}` };
+    }
+  }
+
+  private async mcpInvokeTool(args: Record<string, unknown>): Promise<ToolResult> {
+    const { connection_name, tool_name, arguments: toolArgs = {} } = args;
+    
+    if (typeof connection_name !== 'string' || typeof tool_name !== 'string') {
+      return { success: false, error: 'Invalid arguments: connection_name and tool_name must be strings' };
+    }
+
+    try {
+      const result = await this.mcpService.invokeTool(
+        connection_name,
+        tool_name,
+        toolArgs as Record<string, any>
+      );
+      
+      const output = typeof result === 'object' 
+        ? JSON.stringify(result, null, 2) 
+        : String(result);
+      
+      return { 
+        success: true, 
+        output: `✓ Tool '${tool_name}' invoked successfully\n\nResult:\n${output}`
+      };
+    } catch (error) {
+      return { success: false, error: `Failed to invoke tool: ${error}` };
+    }
+  }
+
+  private async mcpDisconnect(args: Record<string, unknown>): Promise<ToolResult> {
+    const { connection_name } = args;
+    
+    if (typeof connection_name !== 'string') {
+      return { success: false, error: 'Invalid arguments: connection_name must be a string' };
+    }
+
+    try {
+      await this.mcpService.disconnect(connection_name);
+      return { success: true, output: `✓ Disconnected from MCP server '${connection_name}'` };
+    } catch (error) {
+      return { success: false, error: `Failed to disconnect: ${error}` };
+    }
+  }
+
+  private async mcpListConnections(): Promise<ToolResult> {
+    try {
+      const connections = this.mcpService.listConnections();
+      
+      if (connections.length === 0) {
+        return { success: true, output: 'No active MCP connections' };
+      }
+      
+      const list = connections.map((conn, i) => 
+        `${i + 1}. ${conn.name}\n   URL: ${conn.url}\n   Status: ${conn.status}\n   Tools: ${conn.tools}`
+      ).join('\n\n');
+      
+      return { 
+        success: true, 
+        output: `Active MCP connections (${connections.length}):\n\n${list}`
+      };
+    } catch (error) {
+      return { success: false, error: `Failed to list connections: ${error}` };
+    }
   }
 
 }

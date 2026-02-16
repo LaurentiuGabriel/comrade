@@ -12,7 +12,6 @@ import {
   createSession, 
   sendMessage, 
   streamAssistantResponse,
-  stopStreaming,
   setCurrentSession,
   addMessageToCurrentSession 
 } from '../slices/sessionSlice.js';
@@ -82,10 +81,6 @@ export function ChatPage() {
     }
   };
 
-  const handleStop = () => {
-    dispatch(stopStreaming());
-  };
-
   if (!currentSession) {
     return (
       <div className="chat-page empty">
@@ -93,15 +88,13 @@ export function ChatPage() {
           <h3>Start a new conversation</h3>
           <p>Type a message below to begin working with Comrade</p>
         </div>
-      <ChatInput 
-        input={input} 
-        setInput={setInput} 
-        onSend={handleSend} 
-        onStop={handleStop}
-        onKeyDown={handleKeyDown}
-        disabled={loading}
-        streaming={streaming}
-      />
+        <ChatInput 
+          input={input} 
+          setInput={setInput} 
+          onSend={handleSend} 
+          onKeyDown={handleKeyDown}
+          disabled={loading}
+        />
       </div>
     );
   }
@@ -162,7 +155,6 @@ export function ChatPage() {
         input={input} 
         setInput={setInput} 
         onSend={handleSend} 
-        onStop={handleStop}
         onKeyDown={handleKeyDown}
         disabled={loading || streaming}
         streaming={streaming}
@@ -175,7 +167,6 @@ function ChatInput({
   input, 
   setInput, 
   onSend, 
-  onStop,
   onKeyDown, 
   disabled,
   streaming 
@@ -183,19 +174,10 @@ function ChatInput({
   input: string;
   setInput: (value: string) => void;
   onSend: () => void;
-  onStop: () => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
   disabled?: boolean;
   streaming?: boolean;
 }) {
-  const handleButtonClick = () => {
-    if (streaming) {
-      onStop();
-    } else {
-      onSend();
-    }
-  };
-
   return (
     <div className="chat-input-container">
       <div className="chat-input-wrapper">
@@ -206,12 +188,12 @@ function ChatInput({
           onKeyDown={onKeyDown}
           placeholder="Type your message..."
           rows={1}
-          disabled={disabled && !streaming}
+          disabled={disabled}
         />
         <button
-          className={`btn send-btn ${streaming ? 'btn-danger' : 'btn-primary'}`}
-          onClick={handleButtonClick}
-          disabled={!streaming && (disabled || !input.trim())}
+          className="btn btn-primary send-btn"
+          onClick={onSend}
+          disabled={disabled || !input.trim()}
         >
           {streaming ? <StopCircle size={20} /> : <Send size={20} />}
         </button>
