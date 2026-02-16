@@ -21,6 +21,9 @@ const initialState: SessionState = {
   streaming: false,
 };
 
+// Store the current AbortController for cancellation
+let currentAbortController: AbortController | null = null;
+
 // Helper function to get auth headers
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const token = await window.electronAPI.getHostToken();
@@ -129,6 +132,9 @@ export const streamAssistantResponse = createAsyncThunk(
       // Start streaming
       dispatch(setStreaming(true));
       
+      // Create abort controller for this request
+      currentAbortController = new AbortController();
+      
       // Create initial assistant message
       const assistantMessageId = Date.now().toString();
       dispatch(addMessageToCurrentSession({
@@ -146,6 +152,7 @@ export const streamAssistantResponse = createAsyncThunk(
           'Accept': 'text/event-stream'
         },
         body: JSON.stringify({ messages, workspaceId }),
+        signal: currentAbortController.signal,
       });
 
       if (!response.ok) {
@@ -211,10 +218,30 @@ export const streamAssistantResponse = createAsyncThunk(
       }
 
       dispatch(setStreaming(false));
+      currentAbortController = null;
     } catch (error) {
       dispatch(setStreaming(false));
+      currentAbortController = null;
+      
+      // Don't report abort as an error
+      if ((error as Error).name === 'AbortError') {
+        return;
+      }
+      
       return rejectWithValue((error as Error).message);
     }
+  }
+);
+
+// Action to stop the current streaming request
+export const stopStreaming = createAsyncThunk(
+  'session/stopStreaming',
+  async (_, { dispatch }) => {
+    if (currentAbortController) {
+      currentAbortController.abort();
+      currentAbortController = null;
+    }
+    dispatch(setStreaming(false));
   }
 );
 

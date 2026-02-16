@@ -34,7 +34,7 @@ export interface ServerContext {
   telegramBotService: TelegramBotService;
 }
 
-export function startServer(initialConfig: Partial<ServerConfig> = {}) {
+export async function startServer(initialConfig: Partial<ServerConfig> = {}) {
   const app = express();
   const server = createHttpServer(app);
   const wss = new WebSocketServer({ server });
@@ -72,17 +72,6 @@ export function startServer(initialConfig: Partial<ServerConfig> = {}) {
   const sessionService = new SessionService(config);
   const telegramBotService = new TelegramBotService(config, llmService, sessionService);
   const configService = new ConfigService(config);
-  
-  // Load saved configuration
-  (async () => {
-    try {
-      const loadedConfig = await configService.load();
-      configService.applyLoadedConfig(loadedConfig);
-      console.log('[server] Configuration loaded successfully');
-    } catch (error) {
-      console.error('[server] Failed to load configuration:', error);
-    }
-  })();
   
   const context: ServerContext = {
     config,
@@ -158,6 +147,28 @@ export function startServer(initialConfig: Partial<ServerConfig> = {}) {
       console.log('[websocket] Client disconnected');
     });
   });
+
+  // Load saved configuration before starting server
+  try {
+    const loadedConfig = await configService.load();
+    configService.applyLoadedConfig(loadedConfig);
+    console.log('[server] Configuration loaded successfully');
+    
+    // Update LLM service with loaded config (including API key)
+    if (config.llm) {
+      console.log('[server] Applying saved LLM config:', config.llm.provider, config.llm.model);
+      console.log('[server] API key present:', !!config.llm.apiKey);
+      llmService.updateConfig(config.llm);
+    }
+    
+    // Update Telegram service with loaded config
+    if (config.telegram) {
+      console.log('[server] Applying saved Telegram config');
+      telegramBotService.updateConfig(config.telegram);
+    }
+  } catch (error) {
+    console.error('[server] Failed to load configuration:', error);
+  }
 
   // Start server
   server.listen(config.port, config.host, () => {

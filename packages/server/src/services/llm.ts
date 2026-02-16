@@ -510,7 +510,7 @@ CALL A TOOL IMMEDIATELY.`
       model: this.config!.model,
       messages: messages.map(m => ({ role: m.role, content: m.content })),
       tools: forceTools ? tools : undefined,
-      tool_choice: forceTools ? 'required' : 'auto', // FORCE the model to use tools when forceTools is true
+      tool_choice: forceTools ? 'required' : undefined, // Only set tool_choice when forcing tools
       temperature: 0.1, // Lower temperature for more deterministic tool use
       max_tokens: this.config!.maxTokens,
     });

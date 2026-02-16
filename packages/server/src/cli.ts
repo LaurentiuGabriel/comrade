@@ -35,7 +35,7 @@ program
       }
     }
 
-    startServer({
+    await startServer({
       ...config,
       port: parseInt(options.port, 10),
       host: options.host,

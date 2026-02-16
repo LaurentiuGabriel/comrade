@@ -5,6 +5,7 @@
 import React, { useEffect } from 'react';
 import { useAppDispatch, useAppSelector } from './hooks.js';
 import { fetchWorkspaces, createWorkspace } from './slices/workspaceSlice.js';
+import { fetchLLMConfig, fetchLLMProviders, fetchLLMStatus } from './slices/llmSlice.js';
 import { Sidebar } from './components/Sidebar.js';
 import { Header } from './components/Header.js';
 import { ChatPage } from './pages/ChatPage.js';
@@ -24,7 +25,11 @@ export function App() {
   const { activeWorkspaceId } = useAppSelector((state) => state.workspace);
 
   useEffect(() => {
+    // Fetch workspaces and LLM config on app startup
     dispatch(fetchWorkspaces());
+    dispatch(fetchLLMProviders());
+    dispatch(fetchLLMConfig());
+    dispatch(fetchLLMStatus());
   }, [dispatch]);
 
   const renderPage = () => {

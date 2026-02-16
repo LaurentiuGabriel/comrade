@@ -357,13 +357,16 @@ export function setupRoutes(app: Router, context: ServerContext): void {
       return res.status(403).json({ code: 'read_only', message: 'Server is in read-only mode' });
     }
 
-    const config = req.body;
-    context.llmService.updateConfig(config);
+    const llmConfig = req.body;
+    
+    // Update both the LLM service AND the server config
+    context.llmService.updateConfig(llmConfig);
+    context.config.llm = llmConfig;
     
     // Save configuration to file
     try {
       await context.configService.save();
-      console.log('[routes] LLM configuration saved');
+      console.log('[routes] LLM configuration saved to', context.configService.getConfigPath());
     } catch (error) {
       console.error('[routes] Failed to save LLM configuration:', error);
     }
