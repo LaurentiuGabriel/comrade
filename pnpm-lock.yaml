@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      puppeteer:
+        specifier: ^24.0.0
+        version: 24.37.3(typescript@5.9.3)
     devDependencies:
       '@types/node':
         specifier: ^20.10.0

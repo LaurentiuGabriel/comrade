@@ -87,7 +87,15 @@ export function startServer(initialConfig: Partial<ServerConfig> = {}) {
       // Re-initialize LLM service with loaded config (to auto-enable if configured)
       if (config.llm && config.llm.enabled && config.llm.apiKey) {
         llmService.updateConfig(config.llm);
-        console.log('[server] LLM auto-enabled from saved configuration');
+        console.log('[server] Global LLM auto-enabled from saved configuration');
+      }
+      
+      // Initialize workspace-specific LLM configs
+      for (const workspace of config.workspaces) {
+        if (workspace.llmConfig?.enabled && workspace.llmConfig.apiKey) {
+          llmService.updateWorkspaceConfig(workspace.id, workspace.llmConfig);
+          console.log(`[server] Workspace LLM auto-enabled for ${workspace.name || workspace.id}`);
+        }
       }
       
       console.log('[server] Configuration loaded successfully');

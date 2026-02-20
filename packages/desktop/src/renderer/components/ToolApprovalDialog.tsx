@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Shield, AlertTriangle, CheckCircle, XCircle, FileText, Terminal, Globe, Database } from 'lucide-react';
+import { Shield, AlertTriangle, CheckCircle, XCircle, FileText, Terminal, Globe, Database, Play, Search, FileCode, Wrench, Monitor } from 'lucide-react';
 
 export interface ToolApprovalRequest {
   tool: string;
@@ -33,10 +33,10 @@ const TOOL_ICONS: Record<string, React.ReactNode> = {
   web_search: <Globe size={24} />,
   web_fetch: <Globe size={24} />,
   http_request: <Globe size={24} />,
-  code_search: <Terminal size={24} />,
-  find_symbol: <Terminal size={24} />,
-  package_install: <Terminal size={24} />,
-  start_server: <Globe size={24} />,
+  code_search: <FileCode size={24} />,
+  find_symbol: <Search size={24} />,
+  package_install: <Wrench size={24} />,
+  start_server: <Play size={24} />,
   run_tests: <Terminal size={24} />,
   generate_documentation: <FileText size={24} />,
   mcp_connect: <Database size={24} />,
@@ -44,6 +44,10 @@ const TOOL_ICONS: Record<string, React.ReactNode> = {
   mcp_invoke_tool: <Database size={24} />,
   mcp_disconnect: <Database size={24} />,
   mcp_list_connections: <Database size={24} />,
+  browser: <Monitor size={24} />,
+  git_status: <Terminal size={24} />,
+  git_log: <Terminal size={24} />,
+  git_diff: <Terminal size={24} />,
 };
 
 // Tool risk levels
@@ -68,6 +72,10 @@ const TOOL_RISK: Record<string, 'low' | 'medium' | 'high'> = {
   mcp_invoke_tool: 'high',
   mcp_disconnect: 'low',
   mcp_list_connections: 'low',
+  browser: 'high',
+  git_status: 'low',
+  git_log: 'low',
+  git_diff: 'low',
 };
 
 export function ToolApprovalDialog({ request, onResponse }: ToolApprovalDialogProps) {
@@ -134,34 +142,111 @@ export function ToolApprovalDialog({ request, onResponse }: ToolApprovalDialogPr
     return formatted.length > 0 ? formatted.join('\n') : '(no arguments)';
   };
 
-  // Get description of what the tool will do
+  // Get detailed description of what the tool will do
   const getToolDescription = () => {
     const args = request.arguments;
-    const descriptions: Record<string, () => string> = {
-      write_file: () => `Create or overwrite file: ${args.path || 'unknown'}`,
-      read_file: () => `Read file: ${args.path || 'unknown'}`,
-      create_directory: () => `Create directory: ${args.path || 'unknown'}`,
-      list_directory: () => `List files in: ${args.path || 'current directory'}`,
-      apply_patch: () => `Apply patch to files`,
-      execute_command: () => `Execute command: ${args.command || 'unknown'}`,
-      web_search: () => `Search web for: "${args.query || 'unknown'}"`,
-      web_fetch: () => `Fetch content from: ${args.url || 'unknown'}`,
-      http_request: () => `HTTP ${args.method || 'GET'} request to: ${args.url || 'unknown'}`,
-      code_search: () => `Search code for: "${args.pattern || 'unknown'}"`,
-      find_symbol: () => `Find symbol: "${args.symbol || 'unknown'}"`,
-      package_install: () => `Install packages: ${args.packages || 'unknown'}`,
-      start_server: () => `Start HTTP server on port ${args.port || '8080'}`,
-      run_tests: () => `Run test suite`,
-      generate_documentation: () => `Generate ${args.type || 'documentation'}`,
-      mcp_connect: () => `Connect to MCP server: ${args.name || 'unknown'}`,
-      mcp_list_tools: () => `List tools from: ${args.connection_name || 'unknown'}`,
-      mcp_invoke_tool: () => `Invoke MCP tool: ${args.tool_name || 'unknown'}`,
-      mcp_disconnect: () => `Disconnect from: ${args.connection_name || 'unknown'}`,
-      mcp_list_connections: () => `List all MCP connections`,
+    
+    const descriptions: Record<string, () => { action: string; details: string }> = {
+      write_file: () => ({
+        action: `CREATE OR OVERWRITE FILE`,
+        details: `Path: ${args.path || 'unknown'}\nThis will write ${args.content ? (args.content as string).length + ' characters' : 'content'} to the specified file. If the file exists, it will be replaced.`
+      }),
+      read_file: () => ({
+        action: `READ FILE CONTENTS`,
+        details: `Path: ${args.path || 'unknown'}\nThis will read and display the contents of the specified file.`
+      }),
+      create_directory: () => ({
+        action: `CREATE NEW DIRECTORY`,
+        details: `Path: ${args.path || 'unknown'}\nThis will create a new folder/directory at the specified location.`
+      }),
+      list_directory: () => ({
+        action: `LIST DIRECTORY CONTENTS`,
+        details: `Path: ${args.path || 'current directory'}\nThis will show all files and folders in the specified directory.`
+      }),
+      apply_patch: () => ({
+        action: `APPLY CODE PATCH`,
+        details: `This will modify files by applying a diff/patch. Changes may affect multiple files.`
+      }),
+      execute_command: () => ({
+        action: `EXECUTE SHELL COMMAND`,
+        details: `Command: ${args.command || 'unknown'}\n⚠️ This will run a system command on your machine. Only approve if you understand exactly what this command does.`
+      }),
+      web_search: () => ({
+        action: `SEARCH THE WEB`,
+        details: `Query: "${args.query || 'unknown'}"\nThis will search Google and return search results.`
+      }),
+      web_fetch: () => ({
+        action: `FETCH WEBPAGE CONTENT`,
+        details: `URL: ${args.url || 'unknown'}\nThis will download and extract content from the specified webpage.`
+      }),
+      http_request: () => ({
+        action: `MAKE HTTP REQUEST`,
+        details: `Method: ${args.method || 'GET'}\nURL: ${args.url || 'unknown'}\nThis will send an HTTP request to the specified URL.`
+      }),
+      code_search: () => ({
+        action: `SEARCH IN CODEBASE`,
+        details: `Pattern: "${args.pattern || 'unknown'}"\nThis will search for text/patterns in your project files.`
+      }),
+      find_symbol: () => ({
+        action: `FIND CODE SYMBOL`,
+        details: `Symbol: "${args.symbol || 'unknown'}"\nThis will search for a specific function, class, or variable name in your code.`
+      }),
+      package_install: () => ({
+        action: `INSTALL PACKAGES`,
+        details: `Packages: ${args.packages || 'unknown'}\nThis will install software packages (npm, pip, etc.) on your system.`
+      }),
+      start_server: () => ({
+        action: `START HTTP SERVER`,
+        details: `Port: ${args.port || '8080'}\nThis will start a local web server that can serve files.`
+      }),
+      run_tests: () => ({
+        action: `RUN TEST SUITE`,
+        details: `This will execute your project's test suite (unit tests, integration tests, etc.).`
+      }),
+      generate_documentation: () => ({
+        action: `GENERATE DOCUMENTATION`,
+        details: `Type: ${args.type || 'documentation'}\nThis will automatically generate docs for your code.`
+      }),
+      browser: () => ({
+        action: `CONTROL WEB BROWSER`,
+        details: `Action: ${args.action || 'unknown'}\n${args.action === 'navigate' ? `Will navigate to: ${args.url || 'unknown'}` : ''}${args.action === 'start' ? 'Will launch Chrome/Chromium browser' : ''}${args.action === 'click' || args.action === 'type' ? `Will interact with webpage elements` : ''}\n⚠️ Browser automation can access any website and interact with web pages.`
+      }),
+      git_status: () => ({
+        action: `CHECK GIT STATUS`,
+        details: `This will show the current git status (modified files, staged changes, etc.).`
+      }),
+      git_log: () => ({
+        action: `VIEW GIT HISTORY`,
+        details: `This will display the git commit history.`
+      }),
+      git_diff: () => ({
+        action: `SHOW GIT DIFFERENCES`,
+        details: `This will show changes between commits or working directory.`
+      }),
+      mcp_connect: () => ({
+        action: `CONNECT TO MCP SERVER`,
+        details: `Server: ${args.name || 'unknown'}\nThis will connect to an external MCP (Model Context Protocol) server.`
+      }),
+      mcp_list_tools: () => ({
+        action: `LIST MCP TOOLS`,
+        details: `Connection: ${args.connection_name || 'unknown'}\nThis will retrieve available tools from an MCP server.`
+      }),
+      mcp_invoke_tool: () => ({
+        action: `INVOKE MCP TOOL`,
+        details: `Tool: ${args.tool_name || 'unknown'}\nThis will execute a tool on an external MCP server.\n⚠️ MCP tools can execute arbitrary code on external systems.`
+      }),
+      mcp_disconnect: () => ({
+        action: `DISCONNECT FROM MCP`,
+        details: `Connection: ${args.connection_name || 'unknown'}\nThis will close the connection to an MCP server.`
+      }),
+      mcp_list_connections: () => ({
+        action: `LIST MCP CONNECTIONS`,
+        details: `This will show all active MCP server connections.`
+      }),
     };
 
     const describer = descriptions[request.tool];
-    return describer ? describer() : `Execute ${request.tool}`;
+    return describer ? describer() : { action: `EXECUTE ${request.tool.toUpperCase()}`, details: 'This tool will execute with the provided arguments.' };
   };
 
   return (
@@ -181,8 +266,20 @@ export function ToolApprovalDialog({ request, onResponse }: ToolApprovalDialogPr
 
         <div className="approval-content">
           <div className="tool-info">
-            <div className="tool-name">{request.tool}</div>
-            <div className="tool-description">{getToolDescription()}</div>
+            <div className="tool-action-title">{(() => {
+              const desc = getToolDescription();
+              return desc.action;
+            })()}</div>
+            <div className="tool-description">
+              {(() => {
+                const desc = getToolDescription();
+                return desc.details.split('\n').map((line, i) => (
+                  <div key={i} className={line.startsWith('⚠️') ? 'warning-line' : 'detail-line'}>
+                    {line}
+                  </div>
+                ));
+              })()}
+            </div>
           </div>
 
           <div className="arguments-section">
@@ -190,11 +287,14 @@ export function ToolApprovalDialog({ request, onResponse }: ToolApprovalDialogPr
               className="toggle-details-btn"
               onClick={() => setShowDetails(!showDetails)}
             >
-              {showDetails ? 'Hide Details' : 'Show Arguments'}
+              {showDetails ? 'Hide Technical Details' : 'Show Technical Details'}
             </button>
             
             {showDetails && (
               <div className="arguments-details">
+                <div className="tool-name-display">
+                  <strong>Tool:</strong> {request.tool}
+                </div>
                 <pre>{formatArguments()}</pre>
               </div>
             )}

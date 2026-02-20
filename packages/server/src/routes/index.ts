@@ -418,7 +418,16 @@ export function setupRoutes(app: Router, context: ServerContext): void {
       return res.status(400).json({ code: 'invalid_payload', message: 'Messages array is required' });
     }
 
-    const validation = context.llmService.validateConfig();
+    // Get workspace-specific config and validate
+    const llmConfig = workspaceId 
+      ? context.llmService.getWorkspaceConfig(workspaceId)
+      : context.llmService.getConfig();
+    
+    if (!llmConfig) {
+      return res.status(400).json({ code: 'llm_not_configured', message: 'LLM configuration not found' });
+    }
+    
+    const validation = context.llmService.validateConfig(llmConfig);
     if (!validation.valid) {
       return res.status(400).json({ code: 'llm_not_configured', message: validation.error });
     }

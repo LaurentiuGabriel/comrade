@@ -277,7 +277,7 @@ export interface LLMConfig {
 }
 
 export interface LLMMessage {
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
 }
 

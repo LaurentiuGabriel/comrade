@@ -16,21 +16,34 @@ import { MCPService, MCPTool } from './mcp.js';
 const execAsync = promisify(exec);
 
 // Lazy-loaded Puppeteer - only loaded when browser tools are used
+// NOTE: We use createRequire instead of dynamic import() because import('puppeteer')
+// hangs indefinitely in this ESM/TypeScript context, while require() works instantly.
+import { createRequire } from 'module';
 let puppeteer: any = null;
-async function getPuppeteer() {
-  if (!puppeteer) {
-    try {
-      const puppeteerModule = await import('puppeteer');
-      puppeteer = puppeteerModule.default || puppeteerModule;
-    } catch {
-      throw new Error(
-        'Puppeteer is not installed. To use browser automation:\n' +
-        '  cd packages/server && npm install puppeteer\n\n' +
-        'Note: Puppeteer is ~300MB and not included by default.'
-      );
-    }
+
+function getPuppeteer(): any {
+  if (puppeteer) {
+    return puppeteer;
   }
-  return puppeteer;
+  
+  try {
+    console.log('[browser] Loading Puppeteer...');
+    const require = createRequire(import.meta.url);
+    const puppeteerModule = require('puppeteer');
+    puppeteer = puppeteerModule.default || puppeteerModule;
+    
+    const executablePath = puppeteer.executablePath?.();
+    console.log(`[browser] Puppeteer loaded. Chrome: ${executablePath || 'auto-detected'}`);
+    
+    return puppeteer;
+  } catch (error) {
+    console.error('[browser] Failed to load Puppeteer:', error);
+    throw new Error(
+      'Puppeteer is not installed or failed to load. To use browser automation:\n' +
+      '  cd packages/server && npm install puppeteer\n\n' +
+      'Note: Puppeteer downloads Chrome (~170MB) on first install.'
+    );
+  }
 }
 
 // MIME types for static file serving
@@ -2713,27 +2726,60 @@ export class ToolsService {
       return { success: true, output: 'Browser is already running' };
     }
 
-    const puppeteer = await getPuppeteer();
-    const headless = Boolean(options.headless || false);
+    const puppeteer = getPuppeteer();
+    
+    // Default to headless for faster startup (user can set headless: false for visible mode)
+    const headless = options.headless !== false; // Default true unless explicitly set to false
+    const timeout = Number(options.timeout || 30000); // 30 second default timeout
 
-    this.browser = await puppeteer.launch({
-      headless,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--window-size=1280,800'
-      ],
-      defaultViewport: { width: 1280, height: 800 }
-    });
+    console.log(`[browser] Launching Chrome in ${headless ? 'headless' : 'visible'} mode...`);
 
-    this.browserPage = await this.browser.newPage();
-    this.browserState = 'running';
+    try {
+      // Launch browser with timeout
+      const launchPromise = puppeteer.launch({
+        headless,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--disable-extensions',
+          '--disable-software-rasterizer',
+          '--window-size=1280,800'
+        ],
+        defaultViewport: { width: 1280, height: 800 }
+      });
 
-    return {
-      success: true,
-      output: `✓ Browser started in ${headless ? 'headless' : 'visible'} mode\nWindow size: 1280x800\nReady for navigation`
-    };
+      // Race between launch and timeout
+      this.browser = await Promise.race([
+        launchPromise,
+        new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error(`Browser launch timed out after ${timeout}ms. Chrome may not be installed or is taking too long to start.`)), timeout)
+        )
+      ]);
+
+      console.log('[browser] Chrome launched, creating new page...');
+      this.browserPage = await this.browser.newPage();
+      this.browserState = 'running';
+      console.log('[browser] Browser ready!');
+
+      return {
+        success: true,
+        output: `✓ Browser started in ${headless ? 'headless' : 'visible'} mode\nWindow size: 1280x800\nReady for navigation`
+      };
+    } catch (error) {
+      console.error('[browser] Failed to start browser:', error);
+      // Clean up if launch failed
+      if (this.browser) {
+        try {
+          await this.browser.close();
+        } catch {
+          // Ignore cleanup errors
+        }
+        this.browser = null;
+      }
+      throw error;
+    }
   }
 
   private async browserStop(): Promise<ToolResult> {

@@ -123,12 +123,12 @@ export const streamAssistantResponse = createAsyncThunk(
       const serverUrl = await window.electronAPI.getServerUrl();
       const headers = await getAuthHeaders();
       
-      // First check LLM status
-      const statusResponse = await fetch(`${serverUrl}/llm/status`, { headers });
+      // First check LLM status for this workspace
+      const statusResponse = await fetch(`${serverUrl}/llm/status?workspaceId=${encodeURIComponent(workspaceId)}`, { headers });
       const status = await statusResponse.json();
       
       if (!status.enabled || !status.valid) {
-        throw new Error(status.error || 'LLM is not configured. Please configure an LLM provider in Settings.');
+        throw new Error(status.error || 'LLM is not configured for this workspace. Please configure an LLM provider in Settings.');
       }
       
       // Create abort controller for this streaming session
