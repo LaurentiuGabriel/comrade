@@ -16,7 +16,7 @@ import { AuditService } from './services/audit.js';
 import { TokenService } from './services/token.js';
 import { LLMService } from './services/llm.js';
 import { TelegramBotService } from './services/telegram.js';
-import { ToolsService, ToolApproval, ToolApprovalResponse } from './services/tools.js';
+import { ToolsService } from './services/tools.js';
 import { errorHandler } from './middleware/error.js';
 import { authMiddleware } from './middleware/auth.js';
 import { setupRoutes } from './routes/index.js';
@@ -34,9 +34,6 @@ export interface ServerContext {
   llmService: LLMService;
   telegramBotService: TelegramBotService;
   toolsService: ToolsService;
-  // Tool approval state
-  pendingToolApproval: ToolApproval | null;
-  approvalResolver: ((response: ToolApprovalResponse) => void) | null;
 }
 
 export function startServer(initialConfig: Partial<ServerConfig> = {}) {
@@ -117,20 +114,12 @@ export function startServer(initialConfig: Partial<ServerConfig> = {}) {
     llmService,
     telegramBotService,
     toolsService,
-    pendingToolApproval: null,
-    approvalResolver: null,
   };
 
-  // Set up the approval callback for the tools service
-  toolsService.setApprovalCallback(async (approval) => {
-    // Store the pending approval in context
-    context.pendingToolApproval = approval;
-    
-    // Return a promise that resolves when the user responds
-    return new Promise((resolve) => {
-      context.approvalResolver = resolve;
-    });
-  });
+  // NOTE: Tool approval is handled at the LLM service level (in agenticChat),
+  // NOT at the ToolsService level. When no approvalCallback is set on ToolsService,
+  // executeTool() auto-allows. The agenticChat loop yields toolApproval SSE events
+  // and pauses for user response before calling executeTool.
 
   // Middleware
   app.use(cors({

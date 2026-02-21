@@ -12,6 +12,7 @@ export interface Workspace {
   createdAt: number;
   updatedAt?: number;
   llmConfig?: LLMConfig; // Workspace-specific LLM configuration
+  allowAllTools?: boolean; // If true, skip tool approval prompts for this workspace
 }
 
 export interface WorkspaceConfig {
@@ -285,6 +286,13 @@ export interface LLMStreamChunk {
   content: string;
   done: boolean;
   error?: string;
+  /** When present, the frontend should show a tool approval dialog and POST the response to /tools/approve */
+  toolApproval?: {
+    tool: string;
+    arguments: Record<string, unknown>;
+    description: string;
+    timestamp: number;
+  };
 }
 
 export interface LLMProviderInfo {

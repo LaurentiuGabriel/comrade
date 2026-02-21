@@ -813,7 +813,7 @@ export class ToolsService {
   /**
    * Get detailed description of what a tool will do
    */
-  private getToolDescription(toolName: string, args: Record<string, unknown>): string {
+  getToolDescription(toolName: string, args: Record<string, unknown>): string {
     const descriptions: Record<string, (args: Record<string, unknown>) => string> = {
       write_file: (a) => `Create/overwrite file: ${a.path || 'unknown'}`,
       read_file: (a) => `Read file: ${a.path || 'unknown'}`,

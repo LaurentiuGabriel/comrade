@@ -116,9 +116,22 @@ export const sendMessage = createAsyncThunk(
 // Abort controller for active streaming session
 let activeAbortController: AbortController | null = null;
 
+/** Tool approval request received from the server during streaming */
+export interface StreamToolApproval {
+  tool: string;
+  arguments: Record<string, unknown>;
+  description: string;
+  timestamp: number;
+}
+
 export const streamAssistantResponse = createAsyncThunk(
   'session/streamAssistantResponse',
-  async ({ sessionId, workspaceId, messages }: { sessionId: string; workspaceId: string; messages: Array<{ role: string; content: string }> }, { dispatch, rejectWithValue }) => {
+  async ({ sessionId, workspaceId, messages, onToolApproval }: { 
+    sessionId: string; 
+    workspaceId: string; 
+    messages: Array<{ role: string; content: string }>;
+    onToolApproval?: (approval: StreamToolApproval) => void;
+  }, { dispatch, rejectWithValue }) => {
     try {
       const serverUrl = await window.electronAPI.getServerUrl();
       const headers = await getAuthHeaders();
@@ -198,6 +211,11 @@ export const streamAssistantResponse = createAsyncThunk(
                   id: assistantMessageId,
                   content: fullContent,
                 }));
+              }
+
+              // Handle tool approval requests from the server
+              if (data.toolApproval && onToolApproval) {
+                onToolApproval(data.toolApproval as StreamToolApproval);
               }
 
               // Handle tool execution results

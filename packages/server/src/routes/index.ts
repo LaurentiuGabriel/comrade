@@ -541,57 +541,83 @@ export function setupRoutes(app: Router, context: ServerContext): void {
 
   // Tool Approval
   app.get('/tools/approval-status', (req: AuthenticatedRequest, res: Response) => {
-    const status = context.toolsService.getApprovalStatus();
-    res.json(status);
+    const workspaceId = req.query.workspaceId as string | undefined;
+    if (workspaceId) {
+      const workspace = context.config.workspaces.find(w => w.id === workspaceId);
+      res.json({ allowAll: workspace?.allowAllTools === true });
+    } else {
+      const status = context.toolsService.getApprovalStatus();
+      res.json(status);
+    }
   });
 
-  app.post('/tools/clear-approvals', (req: AuthenticatedRequest, res: Response) => {
+  app.post('/tools/clear-approvals', async (req: AuthenticatedRequest, res: Response) => {
     if (context.config.readOnly) {
       return res.status(403).json({ code: 'read_only', message: 'Server is in read-only mode' });
     }
     
-    context.toolsService.clearApprovals();
-    res.json({ success: true, message: 'All tool approvals cleared' });
-  });
-
-  // Tool approval request - called by the desktop app when a tool needs approval
-  app.post('/tools/request-approval', (req: AuthenticatedRequest, res: Response) => {
-    const { tool, arguments: args, timestamp } = req.body;
+    const { workspaceId } = req.body || {};
     
-    if (!tool) {
-      return res.status(400).json({ code: 'invalid_request', message: 'Tool name is required' });
+    if (workspaceId) {
+      // Clear for specific workspace
+      const workspace = context.config.workspaces.find(w => w.id === workspaceId);
+      if (workspace) {
+        workspace.allowAllTools = false;
+        try {
+          await context.configService.save();
+        } catch (error) {
+          console.error('[routes] Failed to persist clear-approvals:', error);
+        }
+      }
+    } else {
+      // Clear global approvals
+      context.toolsService.clearApprovals();
+      // Also clear all workspace allowAllTools
+      for (const ws of context.config.workspaces) {
+        ws.allowAllTools = false;
+      }
+      try {
+        await context.configService.save();
+      } catch (error) {
+        console.error('[routes] Failed to persist clear-approvals:', error);
+      }
     }
-
-    // Store the approval request in the context for the desktop app to pick up
-    context.pendingToolApproval = {
-      tool,
-      arguments: args,
-      timestamp: timestamp || Date.now()
-    };
-
-    res.json({ 
-      success: true, 
-      message: 'Approval request registered',
-      requestId: timestamp 
-    });
+    
+    res.json({ success: true, message: 'Tool approvals cleared' });
   });
+
+  // NOTE: /tools/request-approval is no longer needed.
+  // Tool approval is handled inline via SSE events from agenticChat.
 
   // Tool approval response - called by the desktop app with user's decision
-  app.post('/tools/approve', (req: AuthenticatedRequest, res: Response) => {
-    const { allowed, allowAll } = req.body;
+  app.post('/tools/approve', async (req: AuthenticatedRequest, res: Response) => {
+    const { allowed, allowAll, workspaceId } = req.body;
     
-    if (context.pendingToolApproval && context.approvalResolver) {
-      context.approvalResolver({ allowed, allowAll });
-      context.pendingToolApproval = null;
-      context.approvalResolver = null;
-      res.json({ success: true, message: 'Approval response recorded' });
-    } else {
-      res.status(400).json({ code: 'no_pending_approval', message: 'No pending tool approval found' });
+    // Resolve the pending approval in the LLM service (unblocks the agenticChat generator)
+    context.llmService.resolveToolApproval({ allowed, allowAll });
+    
+    // If "Allow All" was selected, persist it to the workspace config
+    if (allowAll && allowed && workspaceId) {
+      const workspace = context.config.workspaces.find(w => w.id === workspaceId);
+      if (workspace) {
+        workspace.allowAllTools = true;
+        // Persist to disk
+        try {
+          await context.configService.save();
+          console.log(`[routes] Persisted allowAllTools for workspace: ${workspace.name || workspace.id}`);
+        } catch (error) {
+          console.error('[routes] Failed to persist allowAllTools:', error);
+        }
+      }
     }
+    
+    res.json({ success: true, message: 'Approval response recorded' });
   });
 
-  // Get current pending approval (for desktop app polling)
+  // NOTE: /tools/pending-approval is no longer needed.
+  // Tool approval is handled inline via SSE events from agenticChat.
+  // Keeping the endpoint for backward compat but it always returns null.
   app.get('/tools/pending-approval', (req: AuthenticatedRequest, res: Response) => {
-    res.json(context.pendingToolApproval || null);
+    res.json(null);
   });
 }

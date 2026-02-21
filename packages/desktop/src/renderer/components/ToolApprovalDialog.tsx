@@ -312,7 +312,7 @@ export function ToolApprovalDialog({ request, onResponse }: ToolApprovalDialogPr
             onClick={handleReject}
           >
             <XCircle size={18} />
-            Reject
+            Deny
           </button>
           
           <div className="allow-actions">
@@ -327,6 +327,7 @@ export function ToolApprovalDialog({ request, onResponse }: ToolApprovalDialogPr
             <button 
               className="btn btn-primary allow-all-btn"
               onClick={handleAllowAll}
+              title="Allow all tools for this workspace without asking again"
             >
               <Shield size={18} />
               Allow All

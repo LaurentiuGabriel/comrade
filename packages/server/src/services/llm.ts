@@ -51,7 +51,7 @@ export const LLM_PROVIDERS: LLMProviderInfo[] = [
     description: 'Gemini models from Google AI',
     requiresApiKey: true,
     supportsBaseUrl: false,
-    defaultModels: ['gemini-2.0-flash-exp', 'gemini-1.5-pro', 'gemini-1.5-flash'],
+    defaultModels: ['gemini-3.1-pro-preview', 'gemini-3-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
   },
   {
     id: 'ollama',
@@ -88,6 +88,12 @@ function toAnthropicTools(tools: Tool[]): Anthropic.Messages.Tool[] {
   }));
 }
 
+/** Approval response from the user */
+export interface ToolApprovalResult {
+  allowed: boolean;
+  allowAll: boolean;
+}
+
 export class LLMService {
   private config: LLMConfig | null = null;
   private openaiClient: OpenAI | null = null;
@@ -100,6 +106,10 @@ export class LLMService {
   private readonly minRequestInterval: number = 2000; // 2 seconds between requests
   private readonly maxRetries: number = 3;
   private readonly baseDelay: number = 2000; // 2 seconds base delay for retries
+  
+  // Tool approval: set by the route handler before streaming begins
+  // When set, agenticChat will call this and await the result before executing each tool
+  private pendingApprovalResolve: ((result: ToolApprovalResult) => void) | null = null;
 
   constructor(private serverConfig: ServerConfig) {
     this.config = serverConfig.llm || null;
@@ -109,6 +119,26 @@ export class LLMService {
 
   setWorkspace(workspacePath: string): void {
     this.toolsService.setWorkspace(workspacePath);
+  }
+
+  /** Resolve a pending tool approval (called by the route handler when user responds) */
+  resolveToolApproval(result: ToolApprovalResult): void {
+    if (this.pendingApprovalResolve) {
+      this.pendingApprovalResolve(result);
+      this.pendingApprovalResolve = null;
+    }
+  }
+
+  /** Wait for user to approve a tool. Returns a Promise that resolves when user responds. */
+  private waitForApproval(): Promise<ToolApprovalResult> {
+    return new Promise<ToolApprovalResult>((resolve) => {
+      this.pendingApprovalResolve = resolve;
+    });
+  }
+
+  /** Get the tool description from the tools service (for approval dialog) */
+  getToolDescription(toolName: string, args: Record<string, unknown>): string {
+    return this.toolsService.getToolDescription(toolName, args);
   }
 
   private initializeClients(): void {
@@ -448,6 +478,13 @@ export class LLMService {
     // Get workspace-specific or global config
     const workspaceConfig = workspaceId ? this.getWorkspaceConfig(workspaceId) : (this.config || undefined);
     
+    // Get workspace object for allowAllTools check
+    const workspace = workspaceId 
+      ? this.serverConfig.workspaces.find(w => w.id === workspaceId) 
+      : undefined;
+    // Track whether all tools are allowed for this session (starts from workspace setting)
+    let sessionAllowAll = workspace?.allowAllTools === true;
+    
     if (!workspaceConfig) {
       yield { content: '', done: true, error: 'LLM configuration not found' };
       return;
@@ -744,6 +781,49 @@ CALL A TOOL IMMEDIATELY.`
             
             // Debug: Log the tool call arguments
             console.log(`[llm] Executing tool ${toolCall.name} with args:`, JSON.stringify(args, null, 2));
+            
+            // ── Tool Approval Gate ──
+            // If Allow All is not set for this workspace/session, ask the user
+            if (!sessionAllowAll) {
+              const description = this.toolsService.getToolDescription(toolCall.name, args);
+              
+              // Yield a toolApproval SSE event so the frontend can show the dialog
+              yield { 
+                content: '', 
+                done: false, 
+                toolApproval: {
+                  tool: toolCall.name,
+                  arguments: args,
+                  description,
+                  timestamp: Date.now(),
+                }
+              };
+              
+              // Pause here and wait for the user's response (resolved by route handler)
+              console.log(`[llm] Waiting for approval of tool: ${toolCall.name}`);
+              const approval = await this.waitForApproval();
+              console.log(`[llm] Approval result for ${toolCall.name}:`, approval);
+              
+              if (!approval.allowed) {
+                // User denied - skip this tool
+                yield { content: `**${toolCall.name}** ⛔ Denied by user\n\n`, done: false };
+                currentMessages.push({
+                  role: 'user',
+                  content: `${toolCall.name} was DENIED by the user. Do NOT retry this tool. Find an alternative approach or skip this step.`
+                });
+                hasErrors = true;
+                continue;
+              }
+              
+              if (approval.allowAll) {
+                // User clicked "Allow All" - persist to workspace and stop asking
+                sessionAllowAll = true;
+                if (workspace) {
+                  workspace.allowAllTools = true;
+                  console.log(`[llm] Allow All tools set for workspace: ${workspace.name || workspace.id}`);
+                }
+              }
+            }
             
             // Show progress message for browser operations (which can take time)
             if (toolCall.name === 'browser') {
@@ -1291,7 +1371,9 @@ CALL A TOOL IMMEDIATELY.`
 
     const chat = model.startChat({
       history,
-      systemInstruction: systemMessage?.content,
+      systemInstruction: systemMessage?.content 
+        ? { role: 'user', parts: [{ text: systemMessage.content }] } 
+        : undefined,
       generationConfig: {
         temperature: cfg.temperature ?? 0.7,
         maxOutputTokens: cfg.maxTokens,

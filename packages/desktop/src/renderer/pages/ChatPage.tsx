@@ -14,7 +14,8 @@ import {
   streamAssistantResponse,
   setCurrentSession,
   addMessageToCurrentSession,
-  stopStreaming 
+  stopStreaming,
+  StreamToolApproval,
 } from '../slices/sessionSlice.js';
 import { formatTimestamp } from '@comrade/core';
 import { ToolApprovalDialog, ToolApprovalRequest, ToolApprovalResponse } from '../components/ToolApprovalDialog.js';
@@ -25,7 +26,6 @@ export function ChatPage() {
   const { sessions, currentSession, loading, streaming } = useAppSelector((state) => state.session);
   const [input, setInput] = useState('');
   const [approvalRequest, setApprovalRequest] = useState<ToolApprovalRequest | null>(null);
-  const [approvalResolver, setApprovalResolver] = useState<((response: ToolApprovalResponse) => void) | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -38,22 +38,38 @@ export function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentSession?.messages]);
 
-  // Tool approval callback - this will be called by the tools service
-  const handleToolApproval = useCallback((request: ToolApprovalRequest): Promise<ToolApprovalResponse> => {
-    return new Promise((resolve) => {
-      setApprovalRequest(request);
-      setApprovalResolver(() => resolve);
+  // Called when server sends a toolApproval SSE event during streaming
+  const handleToolApprovalFromStream = useCallback((approval: StreamToolApproval) => {
+    setApprovalRequest({
+      tool: approval.tool,
+      arguments: approval.arguments,
+      timestamp: approval.timestamp,
     });
   }, []);
 
-  // Handle approval response from dialog
-  const handleApprovalResponse = (response: ToolApprovalResponse) => {
-    if (approvalResolver) {
-      approvalResolver(response);
-      setApprovalResolver(null);
-      setApprovalRequest(null);
+  // Handle approval response from dialog - POST to server to unblock the stream
+  const handleApprovalResponse = useCallback(async (response: ToolApprovalResponse) => {
+    setApprovalRequest(null);
+    
+    try {
+      const serverUrl = await window.electronAPI.getServerUrl();
+      const token = await window.electronAPI.getHostToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['X-Comrade-Host-Token'] = token;
+      
+      await fetch(`${serverUrl}/tools/approve`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ 
+          allowed: response.allowed, 
+          allowAll: response.allowAll,
+          workspaceId: activeWorkspaceId,
+        }),
+      });
+    } catch (error) {
+      console.error('Failed to send tool approval response:', error);
     }
-  };
+  }, [activeWorkspaceId]);
 
   const handleSend = async () => {
     if (streaming) {
@@ -85,7 +101,8 @@ export function ChatPage() {
     const result = await dispatch(streamAssistantResponse({ 
       sessionId: sessionId!, 
       workspaceId: activeWorkspaceId,
-      messages: messages.map(m => ({ role: m.role, content: m.content }))
+      messages: messages.map(m => ({ role: m.role, content: m.content })),
+      onToolApproval: handleToolApprovalFromStream,
     }));
 
     // If streaming failed (e.g., LLM not configured), show error message
