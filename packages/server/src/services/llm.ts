@@ -27,6 +27,11 @@ export const LLM_PROVIDERS: LLMProviderInfo[] = [
       'o3-mini',
       'o1',
       'o1-mini',
+      'gpt-5',
+      'gpt-5-nano',
+      'gpt-5-mini',
+      'gpt-5.2',
+      'gpt-5.2-pro',
     ],
   },
   {
@@ -36,13 +41,13 @@ export const LLM_PROVIDERS: LLMProviderInfo[] = [
     requiresApiKey: true,
     supportsBaseUrl: false,
     defaultModels: [
+      'claude-opus-4-6',
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5-20251001',
       'claude-opus-4-5-20251101',
       'claude-sonnet-4-5-20251001',
       'claude-haiku-4-5-20251001',
-      'claude-3-5-sonnet-20241022',
-      'claude-3-opus-20240229',
-      'claude-3-sonnet-20240229',
-      'claude-3-haiku-20240307',
+      'claude-3-5-sonnet-20241022'
     ],
   },
   {
