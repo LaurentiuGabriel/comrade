@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  comrade-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: comrade-server
+    ports:
+      - "8080:8080"
+    volumes:
+      # Workspace for file operations
+      - ./workspace:/workspace
+      # Comrade configuration directory
+      - comrade-config:/root/.comrade
+      # For persistent data (optional)
+      - comrade-data:/data
+    environment:
+      - NODE_ENV=production
+      - PORT=8080
+      - HOST=0.0.0.0
+      # LLM API Keys (configure these)
+      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # - GEMINI_API_KEY=${GEMINI_API_KEY}
+      # - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
+      # Telegram Bot Token (optional)
+      # - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    restart: unless-stopped
+    networks:
+      - comrade-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Optional: Add a reverse proxy (nginx)
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: comrade-nginx
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf:ro
+  #   depends_on:
+  #     - comrade-server
+  #   networks:
+  #     - comrade-network
+
+volumes:
+  comrade-config:
+    driver: local
+  comrade-data:
+    driver: local
+
+networks:
+  comrade-network:
+    driver: bridge

@@ -298,6 +298,21 @@ npm run dev
 npm run build
 ```
 
+## Docker Usage
+
+You can also run Comrade using Docker:
+
+```bash
+# Start with Docker Compose (recommended)
+docker-compose up -d
+
+# Or build and run manually
+docker build -t comrade .
+docker run -p 8080:8080 -v ./workspace:/workspace comrade
+```
+
+See [DOCKER.md](./DOCKER.md) for detailed Docker setup instructions.
+
 ## Documentation
 
 - [VISION.md](./VISION.md) - Product vision and positioning
